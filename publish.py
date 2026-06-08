@@ -51,6 +51,7 @@ def _job_row(j: dict) -> dict:
     comp, actual = scorer.display_comp(j)
     comp_str = (f"${comp}" if actual else f"~${comp}") if comp else ""
     return {
+        "id":       j["id"],
         "company":  j["company"],
         "title":    j["title"],
         "score":    j["score"],
