@@ -47,21 +47,27 @@ def _creds() -> tuple[str, str]:
     return url, tok
 
 
+def _job_row(j: dict) -> dict:
+    comp, actual = scorer.display_comp(j)
+    comp_str = (f"${comp}" if actual else f"~${comp}") if comp else ""
+    return {
+        "company":  j["company"],
+        "title":    j["title"],
+        "score":    j["score"],
+        "comp":     comp_str,
+        "url":      j.get("url", "") or "",
+        "location": j.get("location") or "",
+        "contacts": len(find_contacts(j["company"])),
+    }
+
+
 def build_snapshot() -> dict:
     """Assemble the dashboard payload from the tracker (pure read, no network)."""
-    today = []
-    for j in tracker.get_today_new(min_score=60)[:25]:
-        comp, actual = scorer.display_comp(j)
-        comp_str = (f"${comp}" if actual else f"~${comp}") if comp else ""
-        today.append({
-            "company":  j["company"],
-            "title":    j["title"],
-            "score":    j["score"],
-            "comp":     comp_str,
-            "url":      j.get("url", "") or "",
-            "location": j.get("location") or "",
-            "contacts": len(find_contacts(j["company"])),
-        })
+    today = [_job_row(j) for j in tracker.get_today_new(min_score=60)[:25]]
+
+    # Top stored matches (not just today's) — the browse-all view, capped for size.
+    match_rows, matches_total = tracker.search_jobs(min_score=55, status="new", limit=150)
+    matches = [_job_row(j) for j in match_rows]
 
     applications = [
         {
@@ -93,9 +99,11 @@ def build_snapshot() -> dict:
         "generated_at": tracker.now(),
         "pipeline":     tracker.pipeline_counts(),
         "funnel":       tracker.funnel_stats(),
-        "today":        today,
-        "applications": applications,
-        "followups":    followups,
+        "today":         today,
+        "matches":       matches,
+        "matches_total": matches_total,
+        "applications":  applications,
+        "followups":     followups,
     }
 
 
