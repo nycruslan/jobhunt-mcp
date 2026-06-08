@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobhunt-mcp"
+version = "1.0.0"
+description = "Personal, read-only job-search assistant exposed to Claude as an MCP server."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.32",
+    "PyYAML>=6.0",
+    "fpdf2>=2.8",
+    "python-jobspy>=1.1.80",
+    "pandas>=2.2",
+    "mcp>=1.10",
+]
+
+[project.optional-dependencies]
+# Enables API-side resume/cover tailoring. Everything degrades gracefully without it.
+ai = ["anthropic>=0.40"]
+
+[project.scripts]
+jobhunt-mcp = "server:main"
+
+# Flat layout: the app is a set of top-level modules plus a few packages.
+[tool.setuptools]
+py-modules = ["server", "score", "tracker", "config", "daily_briefing"]
+packages = ["feeds", "resume", "cover", "referrals"]
