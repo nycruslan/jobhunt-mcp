@@ -715,6 +715,104 @@ def jobhunt_prep(company: str) -> str:
     )
 
 
+# ── Prompts ──────────────────────────────────────────────────────────────────────
+# Prompts surface as slash commands across MCP clients, including Claude Desktop
+# (where the Claude Code `~/.claude/commands` files are not read). They return a
+# short instruction; the tools above do the real work.
+
+@mcp.prompt()
+def today() -> str:
+    """Pull fresh jobs and show today's top matches."""
+    return (
+        "Call jobhunt_pull_feed, then jobhunt_today. Show matches sorted by score "
+        "descending with TC range and apply URL, and flag roles that have LinkedIn "
+        "referral contacts."
+    )
+
+
+@mcp.prompt()
+def search(query: str = "", company: str = "") -> str:
+    """Browse all stored jobs, optionally by keyword and/or company."""
+    return (
+        f"Call jobhunt_search(query='{query}', company='{company}', min_score=60). "
+        "Show score, TC, location, and apply URL per role, plus the pagination hint."
+    )
+
+
+@mcp.prompt()
+def draft(job_id: str) -> str:
+    """Tailored resume PDF + cover letter for a job id."""
+    return (
+        f"Call jobhunt_draft(job_id='{job_id}'). Read the returned JD, write a "
+        "1-paragraph cover letter using the candidate's background from profile.yaml, "
+        f"then save it with jobhunt_save_cover(job_id='{job_id}', cover_text=...). Show "
+        "the PDF path, the cover letter in a copy-friendly block, and the apply URL.\n\n"
+        "Cover voice: open specific to the company, end with a clear ask. No em dashes, "
+        "no rule-of-three triplets, vary sentence length, plain verbs, no buzzwords."
+    )
+
+
+@mcp.prompt()
+def cover(job_id: str) -> str:
+    """Just the cover letter for a job id."""
+    return (
+        f"Fetch the JD via jobhunt_draft(job_id='{job_id}'), write a 1-paragraph cover "
+        "letter from profile.yaml plus the JD, and save it with jobhunt_save_cover. Same "
+        "human voice as the draft prompt. Show it in a copy-friendly block."
+    )
+
+
+@mcp.prompt()
+def prep(company: str) -> str:
+    """Interview prep for a company."""
+    return (
+        f"Call jobhunt_prep(company='{company}'). If it returns a JD-grounded scaffold, "
+        "expand it into full prep: core systems, how the candidate maps to them, 4-5 "
+        "talking points, and 3 sharp questions to ask."
+    )
+
+
+@mcp.prompt()
+def referrals(company: str) -> str:
+    """LinkedIn contacts at a company."""
+    return (
+        f"Call jobhunt_referrals(company='{company}'). List each contact with role and "
+        "profile link, then show the suggested DM. Remind the user to send it themselves."
+    )
+
+
+@mcp.prompt()
+def stats() -> str:
+    """Application funnel analytics."""
+    return "Call jobhunt_stats and present the funnel, response rate, and applied-by-company."
+
+
+@mcp.prompt()
+def sync(days: str = "") -> str:
+    """Scan email for application updates (read-only; you confirm every change)."""
+    window = f" within the last {days} days" if days else ""
+    return (
+        "Run the email sync. Call jobhunt_active_applications, then search the user's "
+        f"connected Gmail (READ-ONLY) for recruiter replies on those companies{window}. "
+        "Classify each as screen/onsite/offer/rejected or no change, show a review table "
+        "with evidence, and only after the user confirms, call jobhunt_set_status for "
+        "each approved change. Never change status without explicit confirmation."
+    )
+
+
+@mcp.prompt()
+def setup() -> str:
+    """Set up JobHunt: build a profile from a resume, pick targets, wire the brief."""
+    return (
+        "Walk the user through setup conversationally; do not make them hand-edit YAML. "
+        "Read resume/profile.example.yaml for the schema, ask for their resume (pasted "
+        "text, a PDF path, or a LinkedIn export) and write resume/profile.yaml, set "
+        "preferences (location, remote, brief_delivery), help trim targets.yaml, and "
+        "optionally configure the Telegram/email brief in briefing.conf. Finish with a "
+        "jobhunt_pull_feed + jobhunt_today smoke test."
+    )
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main() -> None:

@@ -60,11 +60,20 @@ claude mcp add jobhunt -- jobhunt-mcp
 # (no install) claude mcp add jobhunt -- python3.11 ~/.jobhunt_mcp/server.py
 ```
 
-Claude Desktop — add to `claude_desktop_config.json`:
+Claude Desktop — add to `claude_desktop_config.json` (macOS:
+`~/Library/Application Support/Claude/`). Desktop is a GUI app and does NOT inherit
+your shell `PATH`, so use **absolute paths**. A bare `jobhunt-mcp` usually fails there.
 
 ```json
-{ "mcpServers": { "jobhunt": { "command": "jobhunt-mcp" } } }
+{ "mcpServers": { "jobhunt": {
+    "command": "/usr/local/bin/python3.11",
+    "args": ["/Users/you/.jobhunt_mcp/server.py"]
+} } }
 ```
+
+Find your interpreter with `which python3.11`, then restart Desktop. The server
+exposes its commands as MCP prompts, so they appear as slash commands in Desktop
+automatically — the `cp` step below is only for Claude Code.
 
 Install the slash commands so `/jobhunt-*` works in Claude Code:
 
