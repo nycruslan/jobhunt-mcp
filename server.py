@@ -46,6 +46,7 @@ import config
 import tracker
 import score as scorer
 import feeds
+import publish
 from referrals.match import find_contacts, total_connections
 from resume.tailor import tailor as tailor_resume
 from cover.draft import draft as draft_cover, save_cover
@@ -209,6 +210,7 @@ def jobhunt_pull_feed(company: str = "", min_score: int = 45) -> str:
             lines.append(f"  • {name}: {detail}")
 
     lines.append(f"\nRun jobhunt_today(min_score={min_score}) to review new matches.")
+    publish.publish_safe()
     return "\n".join(lines)
 
 
@@ -522,6 +524,7 @@ def jobhunt_applied(job_id: str, notes: str = "") -> str:
 
     tracker.update_status(job_id, "applied", notes=notes)
     job = tracker.get_job(job_id)
+    publish.publish_safe()
 
     return (
         f"📨 **Applied — {job['company']}: {job['title']}**\n"
@@ -580,6 +583,7 @@ def jobhunt_set_status(job_id: str, status: str, notes: str = "") -> str:
     if notes:
         kwargs["notes"] = f"{job['notes']} | {notes}" if job.get("notes") else notes
     tracker.update_status(job_id, status, **kwargs)
+    publish.publish_safe()
 
     msg = f"✅ {job['company']} — {job['title']}: {prev} → {status}"
     return f"{msg}  ({notes})" if notes else msg

@@ -27,6 +27,7 @@ _DEFAULT_PREFS = {
     "tailor_model": "claude-haiku-4-5",
     "enable_jobspy": False,          # Indeed/Google scrape — off by default (noisy, heavy deps)
     "brief_delivery": "auto",        # auto | telegram | email | both | none
+    "publish": False,                # push a dashboard snapshot to Turso (web /admin)
 }
 
 _DEFAULT_WEIGHTS = {

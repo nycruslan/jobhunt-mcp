@@ -115,6 +115,7 @@ preferences:
   tailor_model: claude-haiku-4-5          # any current Claude model id
   enable_jobspy: false                    # Indeed/Google scrape: off by default (noisy, heavy deps)
   brief_delivery: auto                    # auto | telegram | email | both | none (creds go in briefing.conf)
+  publish: false                          # push dashboard snapshot to Turso for a web /admin (see SETUP-ADMIN.md)
 
 # ── Scoring (optional) ────────────────────────────────────────────────────────
 # Override per-category skill weights. Delete this whole block to use the

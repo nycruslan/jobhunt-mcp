@@ -454,6 +454,8 @@ def main() -> None:
     if delivery in ("email", "both"):
         send_email(conf, subject, message)
 
+    import publish
+    publish.publish_safe()
     _prune_backups(keep=2)
     log.info("Done.")
 
