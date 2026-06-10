@@ -99,7 +99,7 @@ def build_snapshot() -> dict:
     return {
         "generated_at": tracker.now(),
         "pipeline":     tracker.pipeline_counts(),
-        "funnel":       tracker.funnel_stats(),
+        "funnel":       {k: v for k, v in tracker.funnel_stats().items() if k != "counts"},
         "today":         today,
         "matches":       matches,
         "matches_total": matches_total,

@@ -91,7 +91,3 @@ def save_cover(job_id: str, company: str, text: str) -> Path:
     path = OUTPUT_DIR / f"{slug}.txt"
     path.write_text(text.strip() + "\n")
     return path
-
-
-# Backward-compat alias
-_save = save_cover

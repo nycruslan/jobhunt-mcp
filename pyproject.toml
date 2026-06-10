@@ -12,8 +12,6 @@ dependencies = [
     "requests>=2.32",
     "PyYAML>=6.0",
     "fpdf2>=2.8",
-    "python-jobspy>=1.1.80",
-    "pandas>=2.2",
     "mcp>=1.10",
 ]
 
@@ -22,6 +20,8 @@ dependencies = [
 ai = ["anthropic>=0.40"]
 # Enables publishing the dashboard snapshot to Turso for the web /admin page.
 admin = ["libsql>=0.1"]
+# Enables the Indeed/Google supplemental scrape (preferences.enable_jobspy). Heavy.
+jobspy = ["python-jobspy>=1.1.80", "pandas>=2.2"]
 
 [project.scripts]
 jobhunt-mcp = "server:main"

@@ -155,11 +155,6 @@ class _PDF(FPDF):
             new_y="NEXT",
         )
 
-    def edu_row(self, text: str):
-        self.set_font(FONT_NAME, "", SIZE_BODY)
-        self.set_text_color(*DARK_GRAY)
-        self.multi_cell(0, LH_BODY, _strip(text), new_x="LMARGIN", new_y="NEXT")
-
     def plain(self, text: str):
         self.set_font(FONT_NAME, "", SIZE_BODY)
         self.set_text_color(*DARK_GRAY)

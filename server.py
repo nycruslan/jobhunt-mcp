@@ -417,7 +417,6 @@ def jobhunt_draft(job_id: str) -> str:
         resume_path=resume_result["output_path"],
         cover_path=cover_result["output_path"],
     )
-    tracker.add_referral_contacts(job_id, contacts)
 
     comp, is_actual = scorer.display_comp(job)
     if comp:

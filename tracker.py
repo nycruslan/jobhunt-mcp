@@ -36,15 +36,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     notes         TEXT
 );
 
-CREATE TABLE IF NOT EXISTS referral_contacts (
-    job_id      TEXT NOT NULL,
-    name        TEXT NOT NULL,
-    position    TEXT,
-    profile_url TEXT,
-    company     TEXT,
-    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS company_snoozes (
     company       TEXT PRIMARY KEY,
     snoozed_until TEXT NOT NULL
@@ -356,56 +347,5 @@ def applied_count_by_company(days: int = 7) -> dict[str, int]:
         return {r["company"]: r["cnt"] for r in rows}
 
 
-def add_referral_contacts(job_id: str, contacts: list[dict]) -> None:
-    with _conn() as con:
-        con.execute("DELETE FROM referral_contacts WHERE job_id = ?", (job_id,))
-        con.executemany(
-            "INSERT INTO referral_contacts (job_id, name, position, profile_url, company) VALUES (?,?,?,?,?)",
-            [(job_id, c["name"], c.get("position", ""), c.get("profile_url", ""), c.get("company", "")) for c in contacts]
-        )
-
-
-def get_referral_contacts(job_id: str) -> list[dict]:
-    with _conn() as con:
-        rows = con.execute(
-            "SELECT * FROM referral_contacts WHERE job_id = ?", (job_id,)
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-# ── One-time maintenance ────────────────────────────────────────────────────────
-
-def backfill_comp() -> int:
-    """Parse comp from stored jd_text for rows that don't have it yet.
-    Lets existing jobs gain real salary data without re-fetching. Returns count updated."""
-    from feeds._comp import parse_comp
-
-    updated = 0
-    with _conn() as con:
-        rows = con.execute(
-            "SELECT id, jd_text FROM jobs WHERE (comp IS NULL OR comp = '') AND jd_text != ''"
-        ).fetchall()
-        for r in rows:
-            band = parse_comp(r["jd_text"])
-            if band:
-                con.execute("UPDATE jobs SET comp = ? WHERE id = ?", (band, r["id"]))
-                updated += 1
-    return updated
-
-
-def renormalize_companies() -> int:
-    """Re-apply _normalize_company to every stored row so alias merges (Amazon.com →
-    Amazon, JPMorganChase → JPMorgan Chase) take effect retroactively. Returns rows changed."""
-    changed = 0
-    with _conn() as con:
-        names = [r["company"] for r in con.execute("SELECT DISTINCT company FROM jobs").fetchall()]
-        for old in names:
-            new = _normalize_company(old)
-            if new != old:
-                cur = con.execute("UPDATE jobs SET company = ? WHERE company = ?", (new, old))
-                changed += cur.rowcount
-    return changed
