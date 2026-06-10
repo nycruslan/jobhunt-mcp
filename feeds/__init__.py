@@ -15,6 +15,8 @@ from typing import Callable
 
 from feeds import greenhouse, lever, ashby, amazon, workday, netflix
 from feeds import jobspy as jobspy_feed
+from feeds import adzuna as adzuna_feed
+from feeds import remotive as remotive_feed
 
 log = logging.getLogger(__name__)
 
@@ -62,20 +64,35 @@ def fetch_for_company(co: dict) -> list[dict]:
 def pull(
     companies: list[dict],
     *,
-    score_fn: Callable[[str, str, str], int],
+    score_fn: Callable[..., int],
     upsert_fn: Callable[[dict], bool],
-    include_jobspy: bool,
+    include_jobspy: bool = False,
+    include_adzuna: bool = False,
+    include_remotive: bool = False,
 ) -> tuple[int, list[tuple[str, str]], list[tuple[str, str]]]:
-    """Pull every company (+ optional JobSpy), score, and upsert each job.
+    """Pull every target company plus any enabled aggregator feed, score, upsert.
 
-    Everything fetched is stored so nothing is lost at ingest; callers filter by
-    score at display time. Returns (new_count, errors, skipped) where errors and
-    skipped are lists of (name, detail) for the caller to report however it likes.
+    The ATS feeds are the curated, high-signal core. Aggregators (Adzuna, Remotive,
+    JobSpy) add market breadth and are deduped against the ATS results and each
+    other by (company, title). Everything fetched is stored; callers filter by
+    score at display time. Returns (new_count, errors, skipped).
     """
     new_count = 0
     errors: list[tuple[str, str]] = []
     skipped: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
 
+    def _key(j: dict) -> tuple[str, str]:
+        return ((j.get("company") or "").strip().lower(),
+                (j.get("title") or "").strip().lower())
+
+    def _store(j: dict, company: str) -> None:
+        nonlocal new_count
+        j["score"] = score_fn(j.get("title", ""), j.get("jd_text", ""), company, j.get("comp", ""))
+        if upsert_fn(j):
+            new_count += 1
+
+    # ── Curated ATS feeds (high-signal core) ──────────────────────────────────
     for co in companies:
         name = co["name"]
         ats  = (co.get("ats") or "").strip()
@@ -95,19 +112,34 @@ def pull(
             continue
 
         for j in jobs:
-            j["score"] = score_fn(j.get("title", ""), j.get("jd_text", ""), name)
-            if upsert_fn(j):
-                new_count += 1
+            _store(j, name)
+            seen.add(_key(j))
         log.info("Fetched %s: %d jobs", name, len(jobs))
 
+    # ── Aggregators (market breadth), deduped against the ATS core + each other ─
+    aggregators = []
+    if include_adzuna:
+        aggregators.append(("Adzuna", adzuna_feed))
+    if include_remotive:
+        aggregators.append(("Remotive", remotive_feed))
     if include_jobspy:
+        aggregators.append(("JobSpy (Indeed)", jobspy_feed))
+
+    for label, mod in aggregators:
         try:
-            for j in jobspy_feed.fetch_jobs():
-                j["score"] = score_fn(j.get("title", ""), j.get("jd_text", ""), j.get("company", ""))
-                if upsert_fn(j):
-                    new_count += 1
-        except Exception as e:
-            log.warning("JobSpy feed error: %s", e)
-            errors.append(("JobSpy (Indeed)", str(e)))
+            fetched = mod.fetch_jobs()
+        except Exception as e:  # a flaky aggregator never sinks the run
+            log.warning("%s feed error: %s", label, e)
+            errors.append((label, str(e)))
+            continue
+        kept = 0
+        for j in fetched:
+            k = _key(j)
+            if k in seen:
+                continue
+            seen.add(k)
+            _store(j, j.get("company", ""))
+            kept += 1
+        log.info("%s: %d new after dedup (of %d fetched)", label, kept, len(fetched))
 
     return new_count, errors, skipped

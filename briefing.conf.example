@@ -24,3 +24,9 @@ EMAIL_TO=
 # turso db show jobhunt --url && turso db tokens create jobhunt. See SETUP-ADMIN.md.
 TURSO_DATABASE_URL=
 TURSO_AUTH_TOKEN=
+
+# ── Adzuna job feed (free, optional) ──────────────────────────────────────────
+# Broadens ingestion beyond targets.yaml. Register free at https://developer.adzuna.com,
+# then set preferences.enable_adzuna: true in profile.yaml.
+ADZUNA_APP_ID=
+ADZUNA_APP_KEY=

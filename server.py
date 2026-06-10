@@ -190,11 +190,15 @@ def jobhunt_pull_feed(company: str = "", min_score: int = 45) -> str:
         if not companies:
             return f"❌ Company '{company}' not found in targets.yaml."
 
+    prefs = config.preferences()
+    full = not company  # aggregators are market-wide; only run them on a full pull
     new_count, errors, skipped = feeds.pull(
         companies,
         score_fn=scorer.score_job,
         upsert_fn=tracker.upsert_job,
-        include_jobspy=(not company) and config.preferences()["enable_jobspy"],
+        include_jobspy=full and prefs["enable_jobspy"],
+        include_adzuna=full and prefs["enable_adzuna"],
+        include_remotive=full and prefs["enable_remotive"],
     )
 
     lines = [f"✅ Feed refresh complete — **{new_count} new job(s)** added (everything stored, refreshed existing)."]

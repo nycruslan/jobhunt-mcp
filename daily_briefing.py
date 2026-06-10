@@ -107,11 +107,14 @@ def _pull_all_feeds() -> int:
     data = yaml.safe_load((MCP_DIR / "targets.yaml").read_text())
     companies = [co for tier in data.values() for co in tier.get("companies", [])]
 
+    prefs = config.preferences()
     new_count, errors, _skipped = feeds.pull(
         companies,
         score_fn=scorer.score_job,
         upsert_fn=tracker.upsert_job,
-        include_jobspy=config.preferences()["enable_jobspy"],
+        include_jobspy=prefs["enable_jobspy"],
+        include_adzuna=prefs["enable_adzuna"],
+        include_remotive=prefs["enable_remotive"],
     )
     for name, detail in errors:
         log.warning("Feed error: %s — %s", name, detail)

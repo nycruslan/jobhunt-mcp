@@ -26,6 +26,8 @@ _DEFAULT_PREFS = {
     "remote_scope": "us",            # "us" | "anywhere" | "none"
     "tailor_model": "claude-haiku-4-5",
     "enable_jobspy": False,          # Indeed/Google scrape — off by default (noisy, heavy deps)
+    "enable_adzuna": False,          # Adzuna aggregator (free API key, broad market coverage)
+    "enable_remotive": False,        # Remotive remote-jobs board (free, no key)
     "brief_delivery": "auto",        # auto | telegram | email | both | none
     "publish": False,                # push a dashboard snapshot to Turso (web /admin)
 }
@@ -77,3 +79,23 @@ def prep_guides() -> dict:
 
 def contact() -> dict:
     return profile().get("contact") or {}
+
+
+def secret(name: str) -> str:
+    """Read a credential from the environment, falling back to briefing.conf.
+    Used for API keys (Adzuna, Turso) that must never live in profile.yaml."""
+    import os
+
+    val = os.environ.get(name, "").strip()
+    if val:
+        return val
+    conf = ROOT / "briefing.conf"
+    if conf.exists():
+        for line in conf.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip() == name:
+                return v.strip()
+    return ""

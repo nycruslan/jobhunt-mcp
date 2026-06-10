@@ -157,28 +157,44 @@ def _ai_fit(text: str) -> float:
     return round(min(12.0, 5 + hits * 2.0), 1)
 
 
-def _comp_fit(company: str) -> float:
-    """0..32 — the compensation/tier lever. This is what pushes top-paying targets
-    above strong-but-lower-paying off-list firms (Geico, Socure, Paramount, etc.)."""
-    info = _company_index().get((company or "").lower())
-    if not info:
-        return 5.0  # unknown company (random Indeed scrape): low floor
-    tc_max = info["tc_max"]
-    if tc_max <= 0:
-        return 14.0  # known target, TC unspecified
+def _comp_tc(comp_band: str) -> int:
+    """Approx annual TC ceiling in $K from a posting's band: '405-485K' -> 485,
+    '60-85/hr' -> ~177. Returns 0 when unparseable."""
+    if not comp_band:
+        return 0
+    nums = re.findall(r"\d+", comp_band)
+    if not nums:
+        return 0
+    hi = int(nums[-1])
+    if "/hr" in comp_band.lower():
+        hi = round(hi * 2)  # rough hourly → annual $K (~2080 hrs / 1000)
+    return hi
+
+
+def _comp_fit(company: str, comp_band: str = "") -> float:
+    """0..32 — the compensation lever. Prefers the posting's real comp so roles at
+    companies outside targets.yaml are judged on actual pay, not list membership.
+    Falls back to the company band, then a modest baseline."""
+    tc = _comp_tc(comp_band)
+    if tc <= 0:
+        info = _company_index().get((company or "").lower())
+        tc = info["tc_max"] if info else 0
+    if tc <= 0:
+        return 12.0  # unknown comp + off-list company: modest baseline, let role/skill fit decide
     # 1100K -> 32, 300K -> 12. Linear, clamped.
-    scaled = (tc_max - 300) / (1100 - 300) * 20 + 12
+    scaled = (tc - 300) / (1100 - 300) * 20 + 12
     return round(max(8.0, min(32.0, scaled)), 1)
 
 
-def score_job(title: str, jd_text: str, company: str = "") -> int:
-    """0-100 fit score. JD-relative skill fit + role title + AI signal + comp."""
+def score_job(title: str, jd_text: str, company: str = "", comp_band: str = "") -> int:
+    """0-100 fit score. JD-relative skill fit + role title + AI signal + comp.
+    comp_band is the posting's own salary band when known (e.g. '405-485K')."""
     title = title or ""
     combined = f"{title} {jd_text or ''}"
 
-    skill   = _skill_fit(combined)
-    ai      = _ai_fit(combined)
-    comp    = _comp_fit(company)
+    skill    = _skill_fit(combined)
+    ai       = _ai_fit(combined)
+    comp_pts = _comp_fit(company, comp_band)
     role_pts, role_mult = _role_fit(title)
 
     # No JD text (e.g. Workday/NVIDIA): skill_fit is title-only and thin, so lean
@@ -186,7 +202,7 @@ def score_job(title: str, jd_text: str, company: str = "") -> int:
     if not (jd_text or "").strip():
         skill = max(skill, _skill_fit(title))
 
-    raw = (skill + role_pts + ai + comp) * role_mult
+    raw = (skill + role_pts + ai + comp_pts) * role_mult
     return int(round(min(100.0, max(0.0, raw))))
 
 
