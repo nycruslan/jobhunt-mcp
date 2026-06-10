@@ -88,7 +88,7 @@ def save_cover(job_id: str, company: str, text: str) -> Path:
     """Persist cover letter to disk. Trailing newline always present."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     slug = f"{company.lower().replace(' ', '_')}_{job_id}"
-    path = OUTPUT_DIR / f"{slug}.md"
+    path = OUTPUT_DIR / f"{slug}.txt"
     path.write_text(text.strip() + "\n")
     return path
 
