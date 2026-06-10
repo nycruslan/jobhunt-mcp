@@ -52,6 +52,13 @@ $EDITOR resume/profile.yaml
 
 **3. Pick your targets** — edit `targets.yaml` (companies, ATS slugs, comp bands).
 
+**Job sources (all free, optional).** Out of the box you get the public ATS boards plus
+Remotive (no key). For much broader, whole-market coverage, add a free Adzuna key: register
+at https://developer.adzuna.com, put `ADZUNA_APP_ID` and `ADZUNA_APP_KEY` in `briefing.conf`,
+and set `enable_adzuna: true` in `preferences`. Also available: `enable_remotive` (no key) and
+`enable_jobspy` (Indeed scrape, heavier — needs `pipx inject jobhunt-mcp python-jobspy pandas`).
+No API key is required to use the tool.
+
 **4. Connect it to Claude**
 
 ```bash
