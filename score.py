@@ -13,7 +13,6 @@ roles at top targets land 75-95.
 from __future__ import annotations
 
 import re
-from functools import lru_cache
 from pathlib import Path
 
 import yaml
@@ -33,7 +32,7 @@ _SENIORITY_RE = re.compile(
 )
 _JUNIOR_RE = re.compile(
     r"\b(intern|internship|co-?op|new ?grad|university|apprentice|graduate program"
-    r"|associate|junior|jr\.?|entry[ -]?level|\bi{1,3}\b|\b1\b|\b2\b)\b",
+    r"|associate|junior|jr\.?|entry[ -]?level|level\s*[i1]\b|\bi\b|\b1\b)\b",
     re.IGNORECASE,
 )
 # Titles the candidate does not want — disqualify hard.
@@ -68,7 +67,7 @@ _AI_RE = re.compile(
 )
 
 
-@lru_cache(maxsize=1)
+@config.mtime_cached(config.PROFILE_PATH)
 def _weighted_skills() -> tuple[tuple[re.Pattern, float], ...]:
     """Compiled (word-boundary pattern, weight) for every categorized resume skill."""
     out: list[tuple[re.Pattern, float]] = []
@@ -86,17 +85,17 @@ def _weighted_skills() -> tuple[tuple[re.Pattern, float], ...]:
     return tuple(out)
 
 
-@lru_cache(maxsize=1)
+@config.mtime_cached(config.PROFILE_PATH)
 def _skills_flat() -> tuple[str, ...]:
     return tuple(s.lower() for s in config.profile().get("all_skills_flat", []))
 
 
-@lru_cache(maxsize=1)
+@config.mtime_cached(_TARGETS)
 def _targets() -> dict:
     return yaml.safe_load(_TARGETS.read_text())
 
 
-@lru_cache(maxsize=1)
+@config.mtime_cached(_TARGETS)
 def _company_index() -> dict:
     """company_lower -> {tc_max, tc_range}. Built once from targets.yaml."""
     idx: dict[str, dict] = {}
@@ -133,12 +132,16 @@ def _role_fit(title: str) -> tuple[float, float]:
     pts = 0.0
     mult = 1.0
 
+    is_senior = bool(_SENIORITY_RE.search(title))
     if _GOODROLE_RE.search(title):
         pts += 10
-    if _SENIORITY_RE.search(title):
+    if is_senior:
         pts += 8
 
-    if _JUNIOR_RE.search(title):
+    # Junior penalty only when nothing marks the role as senior. Otherwise
+    # "Senior Software Engineer II" (the roman numeral is a level, not a rank)
+    # gets crushed to a new-grad score. A real senior signal always wins.
+    if _JUNIOR_RE.search(title) and not is_senior:
         mult *= 0.35
     if _OFFROLE_RE.search(title):
         mult *= 0.25

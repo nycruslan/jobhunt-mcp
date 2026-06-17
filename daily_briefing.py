@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import html
 import logging
-import os
 import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -45,30 +44,11 @@ _CONF_KEYS = (
 
 
 def _load_conf() -> dict[str, str]:
-    """Load briefing delivery settings (Telegram and/or SMTP email).
-    Order: environment variables, then briefing.conf, then telegram.conf (legacy).
-    """
-    conf: dict[str, str] = {}
+    """Load briefing delivery settings (Telegram and/or SMTP email) through the
+    one shared reader in config.secret: env → briefing.conf → telegram.conf."""
+    import config
 
-    for key in _CONF_KEYS:
-        val = os.environ.get(key, "").strip()
-        if val:
-            conf[key] = val
-
-    for fname in ("briefing.conf", "telegram.conf"):
-        path = MCP_DIR / fname
-        if not path.exists():
-            continue
-        for line in path.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            k, v = k.strip(), v.strip()
-            if k in _CONF_KEYS and v and k not in conf:
-                conf[k] = v
-
-    return conf
+    return {key: val for key in _CONF_KEYS if (val := config.secret(key))}
 
 
 def _resolve_delivery(conf: dict) -> str:
@@ -118,12 +98,29 @@ def _pull_all_feeds() -> int:
     )
     for name, detail in errors:
         log.warning("Feed error: %s — %s", name, detail)
+
+    # Snapshot the DB before the destructive purge; _prune_backups keeps the newest few.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    try:
+        tracker.backup_db(MCP_DIR / f"tracker.sqlite.bak-{stamp}")
+    except Exception as e:
+        log.warning("DB backup failed (skipping purge): %s", e)
+    else:
+        # Full pull re-lists every open req; drop untouched postings gone for 21+ days.
+        removed = tracker.purge_stale_jobs(days=21)
+        if removed:
+            log.info("Pruned %d stale postings not seen in 21+ days", removed)
     return new_count
 
 
 def _prune_backups(keep: int = 2) -> None:
-    """Keep only the newest `keep` tracker.sqlite.bak-* files."""
-    backups = sorted(MCP_DIR.glob("tracker.sqlite.bak-*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    """Keep only the newest `keep` tracker.sqlite.bak-* files. Ignores any stray
+    -wal/-shm sidecars so a sidecar can never be mistaken for a real backup."""
+    backups = sorted(
+        (p for p in MCP_DIR.glob("tracker.sqlite.bak-*")
+         if not p.name.endswith(("-wal", "-shm"))),
+        key=lambda p: p.stat().st_mtime, reverse=True,
+    )
     for stale in backups[keep:]:
         try:
             stale.unlink()

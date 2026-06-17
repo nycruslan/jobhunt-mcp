@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import warnings
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -60,6 +60,17 @@ def _to_iso(d: Any) -> str:
         except ValueError:
             pass
     return ""
+
+
+def _url_hash(url: str) -> str:
+    """12-char stable hash of a URL with query string and fragment removed."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    if not url:
+        return hashlib.sha1(b"").hexdigest()[:12]
+    parts = urlsplit(url)
+    canonical = urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
+    return hashlib.sha1(canonical.encode()).hexdigest()[:12]
 
 
 def _safe_str(val: Any) -> str:
@@ -105,9 +116,11 @@ def _job_from_row(row: Any) -> dict:
     direct_url = _safe_str(row.get("job_url_direct"))
     apply_url  = direct_url or url
 
-    # Stable ID: hash of the canonical URL so the same posting is idempotent
-    url_hash = hashlib.sha1(url.encode()).hexdigest()[:12]
-    job_id   = f"js_{url_hash}"
+    # Stable ID: hash the URL with query string + fragment stripped, so the same
+    # posting stays idempotent across runs even when Indeed/Google append rotating
+    # tracking params (?vjk=, &from=, session tokens). Hashing the raw URL spawned
+    # a fresh "new" row on every pull.
+    job_id   = f"js_{_url_hash(url)}"
 
     jd_text = _safe_str(row.get("description"))
 
@@ -121,7 +134,6 @@ def _job_from_row(row: Any) -> dict:
         "comp":      _comp_from_row(row, jd_text),
         "posted_at": _to_iso(row.get("date_posted")),
         "remote":    bool(row.get("is_remote")),
-        "source":    "jobspy",
     }
 
 
@@ -134,7 +146,6 @@ def fetch_jobs(hours_old: int | None = None) -> list[dict]:
     """
     try:
         from jobspy import scrape_jobs  # type: ignore
-        import pandas as pd
     except ImportError:
         log.error("python-jobspy not installed. Run: pip3.11 install python-jobspy")
         return []

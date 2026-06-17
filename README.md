@@ -15,10 +15,10 @@ targets.yaml ──► feeds/ ──► score.py ──► tracker.sqlite
 
 - **feeds/** — one module per source. ATS boards (Greenhouse, Lever, Ashby, Amazon, Netflix, Workday) hit clean public JSON APIs; `jobspy.py` scrapes Indeed/Google for companies without one. `feeds/__init__.py` (`fetch_for_company`, `pull`) is the single dispatch point used by both the server and the briefing. `_comp.py` extracts real posted salary; `_location.py` is the configurable home/remote filter (driven by `preferences` in `profile.yaml`); `_http.py` is the shared session + HTML stripper.
 - **score.py** — JD-relative fit: skill match + role title + AI signal + company comp band. `display_comp()` prefers a posting's real salary over the static company band.
-- **tracker.py** — SQLite store. `upsert_job` inserts new jobs and refreshes score/comp on known ones. Maintenance: `backfill_comp`, `renormalize_companies`, idempotent `_migrate`.
+- **tracker.py** — SQLite store. `upsert_job` inserts new jobs and refreshes score/comp/`last_seen` on known ones. Maintenance: `purge_stale_jobs` (drops untouched postings unseen for 21+ days), `backup_db`, idempotent `_migrate`.
 - **server.py** — the MCP server. Tools: `jobhunt_today`, `jobhunt_search`, `jobhunt_draft`, `jobhunt_save_cover`, `jobhunt_applied`, `jobhunt_active_applications`, `jobhunt_set_status`, `jobhunt_followup`, `jobhunt_referrals`, `jobhunt_prep`, `jobhunt_dismiss`, snooze/unsnooze, `jobhunt_pull_feed`, `jobhunt_status`, `jobhunt_stats`. Email sync is the `/jobhunt-sync` command: it reads your inbox (read-only) for recruiter replies and proposes status changes you confirm.
 - **daily_briefing.py** — launchd job. Pulls every feed, then sends an HTML-formatted Telegram brief. Logs rotate at 1MB; keeps the 2 newest DB backups.
-- **resume/**, **cover/** — generate a tailored PDF + cover letter. Use the Anthropic API when `ANTHROPIC_API_KEY` is set, otherwise hand structured context to Claude in the chat.
+- **resume/**, **cover/** — `resume/` renders a single-page PDF from your `profile.yaml`; `cover/` saves the cover letter Claude writes inline in the chat. Tailoring happens in the conversation, which already has the JD and your background.
 
 ## Setup (use it yourself)
 
@@ -35,7 +35,7 @@ hardcoded identity, location, or company list. Everything comes from your own
 
 ```bash
 git clone <repo> ~/.jobhunt_mcp && cd ~/.jobhunt_mcp
-pipx install -e .          # or: pip install -e .  (add [ai] for API tailoring)
+pipx install -e .          # or: pip install -e .
 ```
 
 **2. Add your profile** — one file holds your résumé, contact, location, and
@@ -92,10 +92,6 @@ cp commands/*.md ~/.claude/commands/
 to `briefing.conf`, fill the section(s) you want, and set `preferences.brief_delivery`
 (`auto` uses whatever is configured). Email sends by SMTP from the cron job, so it works
 headless (Gmail: `smtp.gmail.com:587` + an App Password). `/jobhunt-setup` does this for you.
-
-**6. (Optional) API tailoring** — `export ANTHROPIC_API_KEY='sk-ant-...'` to have
-résumés and cover letters drafted through the API. Without it, Claude tailors
-them inline in chat. Pick the model with `preferences.tailor_model`.
 
 ## Scheduling
 

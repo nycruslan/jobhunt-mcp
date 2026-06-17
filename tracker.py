@@ -4,6 +4,7 @@ All state lives locally at ~/.jobhunt_mcp/tracker.sqlite
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     score         INTEGER DEFAULT 0,
     status        TEXT DEFAULT 'new',
     fetched_at    TEXT,
+    last_seen     TEXT,
     posted_at     TEXT,
     applied_at    TEXT,
     dismissed     INTEGER DEFAULT 0,
@@ -68,6 +70,24 @@ def _migrate(con) -> None:
     have = {r["name"] for r in con.execute("PRAGMA table_info(jobs)").fetchall()}
     if "comp" not in have:
         con.execute("ALTER TABLE jobs ADD COLUMN comp TEXT")
+    if "last_seen" not in have:
+        con.execute("ALTER TABLE jobs ADD COLUMN last_seen TEXT")
+        # Backfill so existing rows have a baseline; first refresh bumps it.
+        con.execute("UPDATE jobs SET last_seen = fetched_at WHERE last_seen IS NULL")
+    # Amazon ids moved off the az_ prefix (which collided with Adzuna) to amzn_.
+    # The id basis is unchanged, so realign legacy rows in place — otherwise the
+    # next pull's amzn_ ids look brand new and duplicate every open Amazon req.
+    con.execute(
+        "UPDATE OR IGNORE jobs SET id = 'amzn_' || substr(id, 4) "
+        "WHERE ats = 'amazon' AND substr(id, 1, 3) = 'az_'"
+    )
+    # A posting can resurface under a new feed id (aggregators rotate ids). This
+    # index makes the cross-run dedup lookup in pull() cheap.
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_company_title "
+        "ON jobs (LOWER(company), LOWER(title))"
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status)")
 
 
 def upsert_job(job: dict) -> bool:
@@ -76,8 +96,10 @@ def upsert_job(job: dict) -> bool:
 
     On refresh: re-score and update the live fields (title/location/url/remote),
     and fill comp/jd_text/posted_at only when the new fetch actually has a value
-    so a richer earlier fetch is never wiped by a thinner later one. fetched_at,
-    status, applied_at, dismissed, and the resume/cover paths are left alone."""
+    so a richer earlier fetch is never wiped by a thinner later one. last_seen is
+    bumped every time the posting is observed; fetched_at, status, applied_at,
+    dismissed, and the resume/cover paths are left alone."""
+    ts = now()
     params = {
         "id":        job["id"],
         "company":   _normalize_company(job["company"]),
@@ -90,6 +112,7 @@ def upsert_job(job: dict) -> bool:
         "comp":      job.get("comp", "") or "",
         "score":     job.get("score", 0),
         "posted_at": job.get("posted_at", "") or "",
+        "last_seen": ts,
     }
     with _conn() as con:
         existing = con.execute("SELECT id FROM jobs WHERE id = ?", (job["id"],)).fetchone()
@@ -101,6 +124,7 @@ def upsert_job(job: dict) -> bool:
                        url      = :url,
                        remote   = :remote,
                        score    = :score,
+                       last_seen = :last_seen,
                        jd_text   = CASE WHEN :jd_text   != '' THEN :jd_text   ELSE jd_text   END,
                        comp      = CASE WHEN :comp      != '' THEN :comp      ELSE comp      END,
                        posted_at = CASE WHEN :posted_at != '' THEN :posted_at ELSE posted_at END
@@ -109,9 +133,9 @@ def upsert_job(job: dict) -> bool:
             )
             return False
         con.execute(
-            """INSERT INTO jobs (id, company, title, location, url, remote, jd_text, ats, comp, score, fetched_at, posted_at)
-               VALUES (:id, :company, :title, :location, :url, :remote, :jd_text, :ats, :comp, :score, :fetched_at, :posted_at)""",
-            {**params, "fetched_at": now()},
+            """INSERT INTO jobs (id, company, title, location, url, remote, jd_text, ats, comp, score, fetched_at, last_seen, posted_at)
+               VALUES (:id, :company, :title, :location, :url, :remote, :jd_text, :ats, :comp, :score, :fetched_at, :last_seen, :posted_at)""",
+            {**params, "fetched_at": ts},
         )
         return True
 
@@ -122,6 +146,7 @@ def _normalize_company(name: str) -> str:
     all-caps tokens (IBM, PPS) and mixed-case brands (OpenAI, xAI) survive verbatim."""
     if not name:
         return name
+    name = _strip_company_noise(name)
     alias = config.company_aliases().get(name.strip().lower())
     if alias:
         return alias
@@ -145,6 +170,24 @@ def _normalize_company(name: str) -> str:
         else:
             parts.append(tok[:1].upper() + tok[1:].lower())
     return " ".join(parts)
+
+
+_NOISE_SUFFIX_RE = re.compile(
+    r"\s*(?:[-–—|,]\s*)?\b(careers?|jobs|hiring|talent|recruiting)\b\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_company_noise(name: str) -> str:
+    """Drop trailing portal cruft aggregators tack on, e.g.
+    'Disney ... Technology Careers' -> 'Disney ... Technology'. Iterates so a
+    doubled suffix ('... Jobs Careers') collapses. Never returns empty."""
+    prev = None
+    out = name.strip()
+    while out and out != prev:
+        prev = out
+        out = _NOISE_SUFFIX_RE.sub("", out).strip()
+    return out or name.strip()
 
 
 def get_job(job_id: str) -> Optional[dict]:
@@ -345,6 +388,34 @@ def applied_count_by_company(days: int = 7) -> dict[str, int]:
             (cutoff,),
         ).fetchall()
         return {r["company"]: r["cnt"] for r in rows}
+
+
+def backup_db(dest) -> None:
+    """Write a consistent snapshot of the DB to `dest` via SQLite's backup API
+    (WAL-safe, unlike a plain file copy). Used before the destructive stale purge."""
+    with _conn() as con:
+        dst = sqlite3.connect(str(dest))
+        try:
+            con.backup(dst)
+        finally:
+            dst.close()
+
+
+def purge_stale_jobs(days: int = 21) -> int:
+    """Delete untouched 'new' postings not seen by any feed in `days` days.
+
+    Only removes rows the user never acted on (status still 'new', not applied,
+    drafted, reviewed, etc.). Anything in the pipeline is kept regardless of age,
+    so application history is never lost. Returns the number of rows removed."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _conn() as con:
+        cur = con.execute(
+            """DELETE FROM jobs
+               WHERE status = 'new'
+               AND COALESCE(last_seen, fetched_at) < ?""",
+            (cutoff,),
+        )
+        return cur.rowcount
 
 
 def now() -> str:

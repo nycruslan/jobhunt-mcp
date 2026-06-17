@@ -16,8 +16,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Enables API-side resume/cover tailoring. Everything degrades gracefully without it.
-ai = ["anthropic>=0.40"]
 # Enables publishing the dashboard snapshot to Turso for the web /admin page.
 admin = ["libsql>=0.1"]
 # Enables the Indeed/Google supplemental scrape (preferences.enable_jobspy). Heavy.

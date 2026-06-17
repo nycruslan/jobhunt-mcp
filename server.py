@@ -49,7 +49,7 @@ import feeds
 import publish
 from referrals.match import find_contacts, total_connections
 from resume.tailor import tailor as tailor_resume
-from cover.draft import draft as draft_cover, save_cover
+from cover.draft import save_cover
 
 mcp = FastMCP("JobHunt")
 tracker.init_db()
@@ -202,6 +202,13 @@ def jobhunt_pull_feed(company: str = "", min_score: int = 45) -> str:
     )
 
     lines = [f"✅ Feed refresh complete — **{new_count} new job(s)** added (everything stored, refreshed existing)."]
+
+    # A full pull re-lists every open req, so anything not seen in a while is gone.
+    # Drop untouched stale postings (never touches applied/drafted rows).
+    if full:
+        removed = tracker.purge_stale_jobs(days=21)
+        if removed:
+            lines.append(f"🧹 Pruned {removed} stale posting(s) not seen in 21+ days.")
 
     if skipped:
         lines.append("\n⚠️ Manual ATS (check career sites directly):")
@@ -406,11 +413,9 @@ def jobhunt_draft(job_id: str) -> str:
     title   = job["title"]
     jd_text = job.get("jd_text", "")
 
-    # Tailored resume
+    # Resume PDF (rendered from the master profile). The cover letter is written
+    # inline below, then saved with jobhunt_save_cover.
     resume_result = tailor_resume(job_id, company, title, jd_text)
-
-    # Cover letter
-    cover_result = draft_cover(job_id, company, title, jd_text)
 
     # Referral contacts
     contacts = find_contacts(company)
@@ -419,7 +424,6 @@ def jobhunt_draft(job_id: str) -> str:
     tracker.update_status(
         job_id, "drafted",
         resume_path=resume_result["output_path"],
-        cover_path=cover_result["output_path"],
     )
 
     comp, is_actual = scorer.display_comp(job)
@@ -449,22 +453,6 @@ def jobhunt_draft(job_id: str) -> str:
         lines += [
             f"📄 Resume Markdown:",
             f"   {md_path}",
-        ]
-
-    lines += [
-        f"📝 Cover letter (paste into application):",
-        f"   {cover_result['output_path']}",
-    ]
-
-    if not resume_result["via_api"]:
-        lines += [
-            "",
-            "⚠️  ANTHROPIC_API_KEY not set — resume uses your full master bullets.",
-            "   To enable AI tailoring: add to ~/.zshrc:",
-            "   export ANTHROPIC_API_KEY='sk-ant-...'",
-            "   Then: source ~/.zshrc",
-            "",
-            "   Or ask me to tailor it now: just say 'tailor my resume for this role'.",
         ]
 
     if contacts:
@@ -746,6 +734,15 @@ def search(query: str = "", company: str = "") -> str:
     )
 
 
+# One source of truth for cover-letter voice, shared by the draft/cover prompts.
+# (Claude Code already applies the global CLAUDE.md writing style; this carries it
+# into MCP clients like Claude Desktop that don't read CLAUDE.md.)
+_VOICE = (
+    "Voice: open specific to the company, end with a clear ask. No em dashes, "
+    "no rule-of-three triplets, vary sentence length, plain verbs, no buzzwords."
+)
+
+
 @mcp.prompt()
 def draft(job_id: str) -> str:
     """Tailored resume PDF + cover letter for a job id."""
@@ -754,8 +751,7 @@ def draft(job_id: str) -> str:
         "1-paragraph cover letter using the candidate's background from profile.yaml, "
         f"then save it with jobhunt_save_cover(job_id='{job_id}', cover_text=...). Show "
         "the PDF path, the cover letter in a copy-friendly block, and the apply URL.\n\n"
-        "Cover voice: open specific to the company, end with a clear ask. No em dashes, "
-        "no rule-of-three triplets, vary sentence length, plain verbs, no buzzwords."
+        + _VOICE
     )
 
 
@@ -764,8 +760,8 @@ def cover(job_id: str) -> str:
     """Just the cover letter for a job id."""
     return (
         f"Fetch the JD via jobhunt_draft(job_id='{job_id}'), write a 1-paragraph cover "
-        "letter from profile.yaml plus the JD, and save it with jobhunt_save_cover. Same "
-        "human voice as the draft prompt. Show it in a copy-friendly block."
+        "letter from profile.yaml plus the JD, and save it with jobhunt_save_cover. Show "
+        "it in a copy-friendly block.\n\n" + _VOICE
     )
 
 

@@ -9,13 +9,40 @@ Copy resume/profile.example.yaml to resume/profile.yaml and fill it in.
 """
 from __future__ import annotations
 
-from functools import lru_cache
+import functools
 from pathlib import Path
 
 import yaml
 
 ROOT         = Path(__file__).parent
 PROFILE_PATH = ROOT / "resume" / "profile.yaml"
+
+
+def mtime_cached(path: Path):
+    """Cache a zero-arg loader and recompute only when `path`'s mtime changes.
+
+    The MCP server is a long-running process. Plain @lru_cache pinned the first
+    read of profile.yaml/targets.yaml for the life of the process, so edits never
+    took effect until a restart. This reloads on change, costs one stat() per call,
+    and exposes .cache_clear() for tests."""
+    def deco(fn):
+        state: dict = {"mtime": None, "val": None}
+
+        @functools.wraps(fn)
+        def wrapper():
+            try:
+                m = path.stat().st_mtime
+            except OSError:
+                m = None
+            if m != state["mtime"]:
+                state["val"] = fn()
+                state["mtime"] = m
+            return state["val"]
+
+        wrapper.cache_clear = lambda: state.update(mtime=None, val=None)  # type: ignore[attr-defined]
+        return wrapper
+
+    return deco
 
 # Defaults applied when a key is absent, so a minimal profile still works.
 _DEFAULT_PREFS = {
@@ -24,7 +51,6 @@ _DEFAULT_PREFS = {
     "home_states":  ["NY"],
     "allow_remote": True,
     "remote_scope": "us",            # "us" | "anywhere" | "none"
-    "tailor_model": "claude-haiku-4-5",
     "enable_jobspy": False,          # Indeed/Google scrape — off by default (noisy, heavy deps)
     "enable_adzuna": False,          # Adzuna aggregator (free API key, broad market coverage)
     "enable_remotive": False,        # Remotive remote-jobs board (free, no key)
@@ -44,7 +70,7 @@ _DEFAULT_WEIGHTS = {
 }
 
 
-@lru_cache(maxsize=1)
+@mtime_cached(PROFILE_PATH)
 def profile() -> dict:
     if not PROFILE_PATH.exists():
         raise FileNotFoundError(
@@ -54,24 +80,22 @@ def profile() -> dict:
     return yaml.safe_load(PROFILE_PATH.read_text()) or {}
 
 
-@lru_cache(maxsize=1)
+# The accessors below derive from profile() and are cheap to rebuild, so they're
+# left uncached. profile() reloads on file change; these see it immediately.
 def preferences() -> dict:
     return {**_DEFAULT_PREFS, **(profile().get("preferences") or {})}
 
 
-@lru_cache(maxsize=1)
 def category_weights() -> dict:
     user = (profile().get("scoring") or {}).get("category_weights") or {}
     return {**_DEFAULT_WEIGHTS, **user}
 
 
-@lru_cache(maxsize=1)
 def company_aliases() -> dict:
     """Lower-cased {spelling: canonical} merges for sub-brands and aggregators."""
     return {k.strip().lower(): v for k, v in (profile().get("company_aliases") or {}).items()}
 
 
-@lru_cache(maxsize=1)
 def prep_guides() -> dict:
     """Optional {company: guide_text} interview notes."""
     return profile().get("prep") or {}
@@ -82,15 +106,18 @@ def contact() -> dict:
 
 
 def secret(name: str) -> str:
-    """Read a credential from the environment, falling back to briefing.conf.
-    Used for API keys (Adzuna, Turso) that must never live in profile.yaml."""
+    """Read a credential by name: environment first, then briefing.conf, then
+    telegram.conf (legacy). The single key=value reader for everything outside
+    profile.yaml — API keys (Adzuna, Turso) and brief delivery (Telegram, SMTP)."""
     import os
 
     val = os.environ.get(name, "").strip()
     if val:
         return val
-    conf = ROOT / "briefing.conf"
-    if conf.exists():
+    for fname in ("briefing.conf", "telegram.conf"):
+        conf = ROOT / fname
+        if not conf.exists():
+            continue
         for line in conf.read_text().splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:

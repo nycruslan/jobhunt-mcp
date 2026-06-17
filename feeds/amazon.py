@@ -54,6 +54,7 @@ def fetch_jobs(slug: str = "", keyword: str = "") -> list[dict]:
             continue
 
         # Stable ID: prefer icims, fall back to internal id. Truthy check avoids 0 collision.
+        # Prefix is amzn_ (not az_) so it never shares a namespace with Adzuna.
         raw_id = j.get("id_icims") or j.get("id")
         if not raw_id:
             continue
@@ -68,7 +69,7 @@ def fetch_jobs(slug: str = "", keyword: str = "") -> list[dict]:
         ])).strip()
 
         jobs.append({
-            "id":        f"az_{raw_id}",
+            "id":        f"amzn_{raw_id}",
             "ats":       "amazon",
             "company":   "Amazon",
             "title":     j.get("title", ""),

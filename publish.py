@@ -25,26 +25,7 @@ MCP_DIR = Path(__file__).parent
 
 def _creds() -> tuple[str, str]:
     """Turso URL + token from environment, falling back to briefing.conf."""
-    import os
-
-    url = os.environ.get("TURSO_DATABASE_URL", "").strip()
-    tok = os.environ.get("TURSO_AUTH_TOKEN", "").strip()
-    if url and tok:
-        return url, tok
-
-    conf = MCP_DIR / "briefing.conf"
-    if conf.exists():
-        for line in conf.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            k, v = k.strip(), v.strip()
-            if k == "TURSO_DATABASE_URL" and not url:
-                url = v
-            elif k == "TURSO_AUTH_TOKEN" and not tok:
-                tok = v
-    return url, tok
+    return config.secret("TURSO_DATABASE_URL"), config.secret("TURSO_AUTH_TOKEN")
 
 
 def _job_row(j: dict) -> dict:

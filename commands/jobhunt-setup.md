@@ -22,8 +22,7 @@ Everything below with a key is optional and only adds reach.
 
 **3. Preferences**
 - Ask their city and whether they want remote. Set `home_terms`, `home_states` (2-letter
-  codes), `allow_remote`, `remote_scope` (us | anywhere | none), `tailor_model` (default
-  `claude-haiku-4-5`).
+  codes), `allow_remote`, `remote_scope` (us | anywhere | none).
 - If their field isn't software/AI (e.g. a designer), tune `scoring.category_weights` to their
   field AND adjust the role patterns in `score.py` so their titles aren't penalized.
 
@@ -56,11 +55,7 @@ Everything below with a key is optional and only adds reach.
   install dir, and home; write it to `~/Library/LaunchAgents/com.jobhunt.briefing.plist`;
   `launchctl load` it. Offer a test run: `python3.11 ~/.jobhunt_mcp/daily_briefing.py`.
 
-**8. API tailoring (optional)**
-- Mention `ANTHROPIC_API_KEY`: with it, resumes and covers draft via the API; without it you
-  draft them inline here for free. Not needed.
-
-**9. Connect to Claude**
+**8. Connect to Claude**
 - Register: `claude mcp add jobhunt -s user -- jobhunt-mcp`
   (fallback if `jobhunt-mcp` isn't on PATH: `claude mcp add jobhunt -s user -- python3.11 ~/.jobhunt_mcp/server.py`).
 - Install the commands: `cp ~/.jobhunt_mcp/commands/*.md ~/.claude/commands/`

@@ -17,6 +17,7 @@ from feeds import greenhouse, lever, ashby, amazon, workday, netflix
 from feeds import jobspy as jobspy_feed
 from feeds import adzuna as adzuna_feed
 from feeds import remotive as remotive_feed
+from feeds._filters import is_agency
 
 log = logging.getLogger(__name__)
 
@@ -134,6 +135,8 @@ def pull(
             continue
         kept = 0
         for j in fetched:
+            if is_agency(j.get("company", "")):
+                continue  # staffing/recruiting reposters, not the real employer
             k = _key(j)
             if k in seen:
                 continue

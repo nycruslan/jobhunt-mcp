@@ -7,7 +7,6 @@ READ-ONLY: search only. One request per target role, home-area, recent postings.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 
 import requests
@@ -58,17 +57,28 @@ def fetch_jobs() -> list[dict]:
             continue
 
         for j in r.json().get("results", []):
+            # Adzuna's own ad id is stable across runs; the redirect_url carries
+            # rotating session/version tokens (se=, v=), so hashing it spawned a
+            # fresh duplicate row on every pull. Key + dedup on the stable id.
+            ad_id = str(j.get("id") or "").strip()
             url = j.get("redirect_url", "")
-            if not url or url in seen:
+            if not ad_id or ad_id in seen:
                 continue
-            seen.add(url)
+            seen.add(ad_id)
             title = html_to_text(j.get("title", ""))
             company = ((j.get("company") or {}).get("display_name") or "").strip()
             loc = ((j.get("location") or {}).get("display_name") or "").strip()
             if not title or not company or not is_local_or_remote(loc):
                 continue
+
+            # Adzuna often returns a model-*predicted* salary, not one from the
+            # posting. Trusting it would mislabel a guess as "from posting" and
+            # override the curated company band in scoring. Only keep real pay.
+            predicted = str(j.get("salary_is_predicted") or "").strip() in ("1", "true", "True")
+            comp = "" if predicted else comp_from_amounts(j.get("salary_min"), j.get("salary_max"))
+
             out.append({
-                "id":        f"az_{hashlib.sha1(url.encode()).hexdigest()[:12]}",
+                "id":        f"adz_{ad_id}",
                 "ats":       "adzuna",
                 "company":   company,
                 "title":     title,
@@ -76,7 +86,7 @@ def fetch_jobs() -> list[dict]:
                 "url":       url,
                 "remote":    "remote" in loc.lower(),
                 "jd_text":   html_to_text(j.get("description", "")),
-                "comp":      comp_from_amounts(j.get("salary_min"), j.get("salary_max")),
+                "comp":      comp,
                 "posted_at": j.get("created", "") or "",
             })
 

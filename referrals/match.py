@@ -68,6 +68,7 @@ _GENERIC_TOKENS = {
 }
 
 
+@lru_cache(maxsize=512)
 def _build_pattern(name: str) -> re.Pattern:
     """Regex that matches a company's distinctive tokens with word boundaries.
 

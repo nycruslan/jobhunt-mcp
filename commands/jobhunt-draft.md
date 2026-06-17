@@ -13,10 +13,4 @@ Generate a tailored resume PDF and write a custom cover letter for the job with 
 - Reference a concrete overlap between the candidate's background (from profile.yaml) and what the JD asks for.
 - Confident and direct. Not sycophantic.
 - End with a clear ask for a conversation.
-
-**Make it read like a human wrote it, not AI:**
-- No em dashes, en dashes, or double dashes.
-- No rule-of-three triplets ("A, B, and C"). Use pairs, quads, or single ideas.
-- No flagged verbs: spearheaded, leveraged, architected, engineered, implemented, showcasing, delve.
-- No buzzwords: robust, comprehensive, seamless, end-to-end, ensuring, dynamic, results-driven, passionate, proven track record.
-- Vary sentence length. Contractions are fine. Plain verbs: built, ran, shipped, wrote, set up, use.
+- Follow the writing style in CLAUDE.md (no em dashes, no rule-of-three triplets, varied sentence length, plain verbs, no buzzwords).
