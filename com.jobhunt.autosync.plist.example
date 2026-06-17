@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <!-- Scheduled JobHunt autosync (email -> pipeline). Runs Claude headless on the
+       local machine so it can reach both the jobhunt MCP server and Gmail.
+       Replace __MCPDIR__ and __HOME__, install to
+       ~/Library/LaunchAgents/com.ruslan.jobhunt-autosync.plist, then:
+         launchctl load ~/Library/LaunchAgents/com.ruslan.jobhunt-autosync.plist -->
+
+  <key>Label</key>
+  <string>com.ruslan.jobhunt-autosync</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__MCPDIR__/autosync.sh</string>
+  </array>
+
+  <!-- Weekdays at 08:00 local, an hour before the 09:00 brief, so the brief
+       reflects freshly-synced statuses. launchd handles DST. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>__MCPDIR__/autosync.log</string>
+  <key>StandardErrorPath</key>
+  <string>__MCPDIR__/autosync.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Include ~/.local/bin and /usr/local/bin so `claude` and `jobhunt-mcp` resolve. -->
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+  </dict>
+
+</dict>
+</plist>
