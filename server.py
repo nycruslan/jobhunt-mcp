@@ -16,6 +16,7 @@ Tools:
   jobhunt_applied    — mark a role as applied, snapshot what was sent
   jobhunt_active_applications — list jobs in applied/screen/onsite
   jobhunt_set_status — advance a job's status (screen/onsite/offer/rejected/...)
+  jobhunt_record_update — apply an email-inferred update safely (scheduled autosync)
   jobhunt_followup   — draft a polite nudge for a stale application
   jobhunt_prep       — interview themes for a company
 """
@@ -42,6 +43,7 @@ sys.path.insert(0, str(MCP_DIR))
 import yaml
 from mcp.server.fastmcp import FastMCP
 
+import auto
 import config
 import tracker
 import score as scorer
@@ -577,7 +579,65 @@ def jobhunt_set_status(job_id: str, status: str, notes: str = "") -> str:
     publish.publish_safe()
 
     msg = f"✅ {job['company']} — {job['title']}: {prev} → {status}"
-    return f"{msg}  ({notes})" if notes else msg
+    if notes:
+        msg = f"{msg}  ({notes})"
+    # Reaching an interview stage: surface prep automatically, while it's relevant.
+    if status in ("screen", "onsite"):
+        msg += "\n\n───────────────\n📋 **Interview prep**\n" + _prep_text(job["company"])
+    return msg
+
+
+@mcp.tool()
+def jobhunt_record_update(company: str, signal: str, evidence: str = "") -> str:
+    """
+    Record a pipeline update inferred from an email, the safe entry point for the
+    scheduled /jobhunt-autosync. Matches the company to one of your applications,
+    then either advances it automatically (low-stakes signals) or asks you to
+    confirm (high-stakes ones). Never guesses when several applications match, and
+    never moves a stage backwards.
+
+    Signals: 'application_received' (→ applied), 'rejected', 'interview' (→ screen),
+    'onsite', 'offer'. application_received, rejected, and interview apply
+    automatically; onsite and offer are surfaced for you to confirm.
+
+    Args:
+        company:  Company name from the email (e.g. 'Stripe', 'Scale AI').
+        signal:   One of the signals above.
+        evidence: Optional short quote/subject line that justified the signal.
+    """
+    target = auto.signal_status(signal)
+    if not target:
+        return f"❌ Unknown signal '{signal}'. Use one of: {', '.join(auto.SIGNAL_STATUS)}."
+
+    candidates = tracker.find_jobs_by_status(auto.candidate_statuses(signal))
+    matches = auto.match_jobs(company, candidates)
+
+    if not matches:
+        return f"🔍 No active application matches '{company}' for a '{signal}' update. Nothing changed."
+    if len(matches) > 1:
+        listing = "\n  ".join(f"{m['title']} — id {m['id']} ({m['status']})" for m in matches[:6])
+        return (
+            f"⚠️ {len(matches)} applications match '{company}'. I won't guess. Confirm which:\n  "
+            f"{listing}\n→ then jobhunt_set_status(job_id='...', status='{target}')."
+        )
+
+    job = matches[0]
+    if not auto.is_forward(job["status"], target):
+        return f"ℹ️ {job['company']} — {job['title']} is already at '{job['status']}'. No change."
+
+    if not auto.should_auto_apply(signal):
+        ev = f" — {evidence}" if evidence else ""
+        return (
+            f"🔔 Needs your confirmation: **{job['company']} — {job['title']}** looks like "
+            f"**{target}**{ev}.\n→ Apply with jobhunt_set_status(job_id='{job['id']}', status='{target}')."
+        )
+
+    note = f"auto: {signal}" + (f" — {evidence}" if evidence else "")
+    note = f"{job['notes']} | {note}" if job.get("notes") else note
+    prev = job["status"]
+    tracker.update_status(job["id"], target, notes=note)
+    publish.publish_safe()
+    return f"✅ {job['company']} — {job['title']}: {prev} → {target} (auto from email: {signal})."
 
 
 @mcp.tool()
@@ -668,15 +728,10 @@ def jobhunt_followup(job_id: str) -> str:
     )
 
 
-@mcp.tool()
-def jobhunt_prep(company: str) -> str:
-    """
-    Interview preparation context for a target company: culture, known interview style,
-    what to research, and suggested questions to ask.
-
-    Args:
-        company: Company name (e.g. 'Anthropic', 'Two Sigma').
-    """
+def _prep_text(company: str) -> str:
+    """Interview prep for a company: a static guide, else a JD-grounded scaffold,
+    else a generic senior-SWE guide. Shared by jobhunt_prep and the auto-prep that
+    fires when an application reaches the screen/onsite stage."""
     guide = config.prep_guides().get(company)
     if guide:
         return guide
@@ -708,6 +763,18 @@ def jobhunt_prep(company: str) -> str:
         f"• Questions to ask: Team structure, AI strategy, biggest technical challenges\n\n"
         f"Resources: Glassdoor interview reviews for '{company}', Blind, levels.fyi"
     )
+
+
+@mcp.tool()
+def jobhunt_prep(company: str) -> str:
+    """
+    Interview preparation context for a target company: culture, known interview style,
+    what to research, and suggested questions to ask.
+
+    Args:
+        company: Company name (e.g. 'Anthropic', 'Two Sigma').
+    """
+    return _prep_text(company)
 
 
 # ── Prompts ──────────────────────────────────────────────────────────────────────

@@ -363,6 +363,20 @@ def funnel_stats() -> dict:
     }
 
 
+def find_jobs_by_status(statuses: tuple[str, ...]) -> list[dict]:
+    """All non-dismissed jobs in any of `statuses`. Used by the automation matcher
+    to find which application a recruiter email or confirmation refers to."""
+    if not statuses:
+        return []
+    placeholders = ",".join("?" * len(statuses))
+    with _conn() as con:
+        rows = con.execute(
+            f"SELECT * FROM jobs WHERE status IN ({placeholders}) AND dismissed = 0",
+            tuple(statuses),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def active_applications() -> list[dict]:
     """Jobs in an active application stage (applied/screen/onsite), newest first.
     This is what an email-sync pass checks for recruiter updates."""
