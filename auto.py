@@ -21,9 +21,19 @@ SIGNAL_STATUS = {
     "offer":                "offer",
 }
 
-# Low-stakes, common transitions apply automatically. High-stakes ones (an onsite
-# to schedule, an offer to weigh) are surfaced for the human to confirm instead.
-AUTO_APPLY_SIGNALS = {"application_received", "rejected", "interview"}
+# Low-stakes, common transitions apply automatically. High-stakes or irreversible
+# ones are surfaced for the human to confirm instead: an onsite to schedule, an
+# offer to weigh, and a rejection — terminal, and a spoofed or misread email must
+# not be able to close a live application unattended.
+AUTO_APPLY_SIGNALS = {"application_received", "interview"}
+
+# A signal may only auto-apply from these current statuses. application_received
+# is trustworthy on a role you actually drafted/applied to; landing on an
+# untouched 'new'/'reviewed' row means the receipt is probably for a different
+# req at the same company, so that case is surfaced for confirmation instead.
+_AUTO_APPLY_FROM = {
+    "application_received": ("drafted", "applied"),
+}
 
 # Which existing rows a signal can attach to. A confirmation lands on a role you
 # drafted/saw but had not marked applied; recruiter replies land on active apps.
@@ -36,14 +46,6 @@ _DEFAULT_CANDIDATES = ("applied", "screen", "onsite")
 _ORDER = ["new", "reviewed", "drafted", "applied", "screen", "onsite", "offer"]
 _TERMINAL = {"rejected", "withdrawn"}
 
-_CONFIRM_RE = re.compile(
-    r"thank(?:s| you) for (?:your |)(?:applying|application|interest)"
-    r"|we(?:'ve| have) received your application"
-    r"|your application (?:has been |was )?(?:received|submitted)"
-    r"|application (?:was |has been )?(?:received|submitted)",
-    re.IGNORECASE,
-)
-
 # Structure/legal/too-generic tokens that must not drive a company match on their own.
 _GENERIC = {
     "inc", "llc", "ltd", "corp", "co", "the", "and", "group", "holdings",
@@ -53,19 +55,18 @@ _GENERIC = {
 }
 
 
-def is_application_confirmation(text: str) -> bool:
-    """True when an email body/subject reads as an 'application received' receipt."""
-    return bool(text) and bool(_CONFIRM_RE.search(text))
-
-
 def signal_status(signal: str) -> str | None:
     """Target pipeline status for a signal, or None if the signal is unknown."""
     return SIGNAL_STATUS.get(signal)
 
 
-def should_auto_apply(signal: str) -> bool:
-    """Whether a signal is safe to apply without human confirmation."""
-    return signal in AUTO_APPLY_SIGNALS
+def should_auto_apply(signal: str, current_status: str = "") -> bool:
+    """Whether a signal is safe to apply without human confirmation, given the
+    matched job's current status. Unknown/unlisted signals never auto-apply."""
+    if signal not in AUTO_APPLY_SIGNALS:
+        return False
+    allowed_from = _AUTO_APPLY_FROM.get(signal)
+    return allowed_from is None or current_status in allowed_from
 
 
 def candidate_statuses(signal: str) -> tuple[str, ...]:
@@ -90,7 +91,12 @@ def is_forward(current: str, target: str) -> bool:
 
 def _tokens(name: str) -> set[str]:
     raw = re.sub(r"[^a-z0-9 ]", " ", (name or "").lower())
-    return {t for t in raw.split() if len(t) > 2 and t not in _GENERIC}
+    toks = {t for t in raw.split() if len(t) > 2 and t not in _GENERIC}
+    if toks:
+        return toks
+    # Nothing survived the length filter ('HP', 'EA', 'X'): fall back to the
+    # short tokens themselves so tiny company names can still match.
+    return {t for t in raw.split() if t not in _GENERIC}
 
 
 def match_jobs(company: str, jobs: list[dict]) -> list[dict]:

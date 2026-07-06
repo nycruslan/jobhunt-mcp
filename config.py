@@ -10,6 +10,7 @@ Copy resume/profile.example.yaml to resume/profile.yaml and fill it in.
 from __future__ import annotations
 
 import functools
+import re
 from pathlib import Path
 
 import yaml
@@ -103,6 +104,14 @@ def prep_guides() -> dict:
 
 def contact() -> dict:
     return profile().get("contact") or {}
+
+
+def slugify(text: str) -> str:
+    """Filesystem-safe slug for output filenames. Aggregators return arbitrary
+    employer strings ('Foo / Bar Inc'), so anything outside [a-z0-9] becomes a
+    single underscore and the result is never empty."""
+    out = re.sub(r"[^a-z0-9]+", "_", (text or "").lower()).strip("_")
+    return out or "unknown"
 
 
 def secret(name: str) -> str:

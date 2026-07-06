@@ -2,14 +2,6 @@
 import auto
 
 
-def test_application_confirmation_detection():
-    assert auto.is_application_confirmation("Thank you for applying to Stripe!")
-    assert auto.is_application_confirmation("We have received your application.")
-    assert auto.is_application_confirmation("Your application was submitted successfully")
-    assert not auto.is_application_confirmation("Here is your weekly tech newsletter")
-    assert not auto.is_application_confirmation("")
-
-
 def test_signal_status_mapping():
     assert auto.signal_status("application_received") == "applied"
     assert auto.signal_status("rejected") == "rejected"
@@ -20,12 +12,19 @@ def test_signal_status_mapping():
 
 
 def test_auto_apply_gate():
-    assert auto.should_auto_apply("application_received")
-    assert auto.should_auto_apply("rejected")
-    assert auto.should_auto_apply("interview")
-    # High-stakes signals require human confirmation.
-    assert not auto.should_auto_apply("onsite")
-    assert not auto.should_auto_apply("offer")
+    assert auto.should_auto_apply("interview", "applied")
+    # A receipt is trustworthy on a role the user actually drafted/applied to...
+    assert auto.should_auto_apply("application_received", "drafted")
+    assert auto.should_auto_apply("application_received", "applied")
+    # ...but landing on an untouched row means it's probably a different req at
+    # the same company — surface for confirmation instead of auto-marking applied.
+    assert not auto.should_auto_apply("application_received", "new")
+    assert not auto.should_auto_apply("application_received", "reviewed")
+    # Irreversible or high-stakes signals always require human confirmation.
+    assert not auto.should_auto_apply("rejected", "applied")
+    assert not auto.should_auto_apply("onsite", "screen")
+    assert not auto.should_auto_apply("offer", "onsite")
+    assert not auto.should_auto_apply("nonsense", "applied")
 
 
 def test_candidate_statuses():
@@ -53,6 +52,13 @@ def test_match_jobs_exact_and_subset():
     # Legal suffix / extra word should still match the brand.
     assert auto.match_jobs("Stripe Inc", [{"company": "Stripe"}])
     assert auto.match_jobs("Stripe", [{"company": "Stripe Payments"}])
+
+
+def test_match_jobs_short_names():
+    # Names of one short token used to be filtered to nothing and never matched.
+    assert auto.match_jobs("HP", [{"company": "HP"}])
+    assert auto.match_jobs("EA", [{"company": "EA"}])
+    assert auto.match_jobs("HP", [{"company": "Stripe"}]) == []
 
 
 def test_match_jobs_no_false_positive_and_multiple():
