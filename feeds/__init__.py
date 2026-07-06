@@ -13,10 +13,12 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
+import config
 from feeds import greenhouse, lever, ashby, amazon, workday, netflix
 from feeds import jobspy as jobspy_feed
 from feeds import adzuna as adzuna_feed
 from feeds import remotive as remotive_feed
+from feeds._filters import is_agency
 
 log = logging.getLogger(__name__)
 
@@ -74,23 +76,33 @@ def pull(
 
     The ATS feeds are the curated, high-signal core. Aggregators (Adzuna, Remotive,
     JobSpy) add market breadth and are deduped against the ATS results and each
-    other by (company, title). Everything fetched is stored; callers filter by
-    score at display time. Returns (new_count, errors, skipped).
+    other by (canonical company, title, location) — company runs through
+    company_aliases() so alias spellings collapse, and location keeps the same
+    title in different cities distinct. Everything fetched is stored; callers
+    filter by score at display time. Returns (new_count, errors, skipped).
     """
     new_count = 0
     errors: list[tuple[str, str]] = []
     skipped: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
+    aliases = config.company_aliases()
 
-    def _key(j: dict) -> tuple[str, str]:
-        return ((j.get("company") or "").strip().lower(),
-                (j.get("title") or "").strip().lower())
+    def _key(j: dict) -> tuple[str, str, str]:
+        co = (j.get("company") or "").strip().lower()
+        co = str(aliases.get(co, co)).strip().lower()
+        return (co,
+                (j.get("title") or "").strip().lower(),
+                config.slugify(j.get("location") or ""))
 
     def _store(j: dict, company: str) -> None:
         nonlocal new_count
-        j["score"] = score_fn(j.get("title", ""), j.get("jd_text", ""), company, j.get("comp", ""))
-        if upsert_fn(j):
-            new_count += 1
+        try:
+            j["score"] = score_fn(j.get("title", ""), j.get("jd_text", ""), company, j.get("comp", ""))
+            if upsert_fn(j):
+                new_count += 1
+        except Exception as e:  # one bad row never sinks the batch
+            log.warning("Store failed for %s — %s: %s", company, j.get("title", ""), e)
+            errors.append((company, f"store failed: {e}"))
 
     # ── Curated ATS feeds (high-signal core) ──────────────────────────────────
     for co in companies:
@@ -134,6 +146,8 @@ def pull(
             continue
         kept = 0
         for j in fetched:
+            if is_agency(j.get("company", "")):
+                continue  # staffing/recruiting reposters, not the real employer
             k = _key(j)
             if k in seen:
                 continue

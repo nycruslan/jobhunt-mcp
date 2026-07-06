@@ -58,6 +58,27 @@ _SALARY_CUE = re.compile(
 )
 _CUE_WINDOW = 60
 
+# Hourly cue must sit near the amount, in the same sentence — a JD saying
+# "Contractors are paid hourly" elsewhere must not relabel an annual range.
+_HOURLY_CUE = re.compile(r"per hour|an hour|/\s?hr\b|/\s?hour\b|hourly", re.IGNORECASE)
+_HOURLY_WINDOW = 70
+_SENTENCE_STOPS = (".", "\n", ";")
+
+
+def _hourly_near(text: str, start: int, end: int) -> bool:
+    """True when an hourly cue appears near (start, end), clipped to the
+    surrounding sentence so cues from neighboring sentences can't leak in."""
+    before = text[max(0, start - _HOURLY_WINDOW): start]
+    cut = max(before.rfind(s) for s in _SENTENCE_STOPS)
+    if cut != -1:
+        before = before[cut + 1:]
+    after = text[end: end + _HOURLY_WINDOW]
+    for stop in _SENTENCE_STOPS:
+        i = after.find(stop)
+        if i != -1:
+            after = after[:i]
+    return bool(_HOURLY_CUE.search(before + " " + after))
+
 
 def _to_dollars(tok: str) -> float | None:
     """'207,000' -> 207000, '207k' -> 207000, '1.2m' -> 1200000. None if unparseable."""
@@ -90,7 +111,8 @@ def _format(lo: float, hi: float, hourly: bool) -> str:
     return f"{a}K" if a == b else f"{a}-{b}K"
 
 
-def _band(lo: float | None, hi: float | None, *, hourly_hint: bool = False) -> str:
+def _band(lo: float | None, hi: float | None, *, hourly_hint: bool = False,
+          annual_hint: bool = False) -> str:
     """Validate a (lo, hi) pair and format it, or return '' if implausible."""
     vals = [v for v in (lo, hi) if v is not None]
     if not vals:
@@ -98,8 +120,9 @@ def _band(lo: float | None, hi: float | None, *, hourly_hint: bool = False) -> s
     lo = min(vals)
     hi = max(vals)
 
-    # Hourly if explicitly hinted or both endpoints are too small to be annual.
-    hourly = hourly_hint or hi < 1_000
+    # Hourly if explicitly hinted, or (absent a known-annual interval) both
+    # endpoints are too small to be annual.
+    hourly = hourly_hint or (not annual_hint and hi < 1_000)
     if hourly:
         if _HOURLY_MIN <= lo <= hi <= _HOURLY_MAX:
             return _format(lo, hi, hourly=True)
@@ -118,15 +141,34 @@ def comp_from_cents(min_cents, max_cents, currency: str = "USD") -> str:
     return _band(lo, hi)
 
 
+# Annualization factors for JobSpy's interval column (working days/weeks).
+_INTERVAL_MULT = {
+    "yearly": 1, "year": 1, "annual": 1, "annually": 1,
+    "monthly": 12, "month": 12,
+    "weekly": 52, "week": 52,
+    "daily": 260, "day": 260,
+}
+
+
 def comp_from_amounts(min_amount, max_amount, interval: str = "") -> str:
-    """JobSpy salary columns: amounts are dollars (yearly) or dollars/hour."""
+    """JobSpy salary columns: amounts are dollars at the given interval
+    (yearly / monthly / weekly / daily / hourly). Hourly keeps the "/hr" form;
+    the other intervals annualize. Only a missing/unknown interval falls back
+    to the magnitude heuristic in _band."""
     try:
         lo = float(min_amount) if min_amount not in (None, "") else None
         hi = float(max_amount) if max_amount not in (None, "") else None
     except (TypeError, ValueError):
         return ""
-    hourly = (interval or "").strip().lower() in ("hourly", "hour")
-    return _band(lo, hi, hourly_hint=hourly)
+    ivl = (interval or "").strip().lower()
+    if ivl in ("hourly", "hour"):
+        return _band(lo, hi, hourly_hint=True)
+    mult = _INTERVAL_MULT.get(ivl)
+    if mult is None:
+        return _band(lo, hi)
+    lo = lo * mult if lo is not None else None
+    hi = hi * mult if hi is not None else None
+    return _band(lo, hi, annual_hint=True)
 
 
 def parse_comp(text: str) -> str:
@@ -135,12 +177,11 @@ def parse_comp(text: str) -> str:
         return ""
 
     text = _UNESCAPE_RE.sub(r"\1", text)
-    hourly_doc = bool(re.search(r"\bper hour\b|/\s?hr\b|hourly", text, re.IGNORECASE))
 
     for pattern in (_RANGE_TIGHT, _RANGE_WIDE):
         for m in pattern.finditer(text):
             band = _band(_to_dollars(m.group(1)), _to_dollars(m.group(2)),
-                         hourly_hint=hourly_doc)
+                         hourly_hint=_hourly_near(text, m.start(), m.end()))
             if band:
                 return band
 

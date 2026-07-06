@@ -9,7 +9,7 @@
    /jobhunt-draft <paste>
    ```
    Produces:
-   - Tailored resume PDF (auto-opens)
+   - Resume PDF rendered for that job (auto-opens)
    - 1-paragraph cover letter (inline in chat, also saved to disk)
    - Apply URL
 4. **Open the apply URL** → upload the PDF → paste the cover letter → submit
@@ -23,7 +23,7 @@
 | Command | What it does |
 |---|---|
 | `/jobhunt-today` | Show top matches on demand (don't wait for 9am) |
-| `/jobhunt-draft <job_id>` | Full: tailored resume PDF + cover letter |
+| `/jobhunt-draft <job_id>` | Full: resume PDF + custom cover letter |
 | `/jobhunt-cover <job_id>` | Just the cover letter (faster when reusing same PDF) |
 | `/jobhunt-prep <job_id>` | Interview prep notes for a role |
 | `/jobhunt-referrals` | Pull contacts from your network at target companies |
@@ -43,12 +43,14 @@ Public ATS APIs we pull from (read-only, no auth, all candidate-facing endpoints
 | Source | Companies |
 |---|---|
 | Greenhouse | Anthropic, Stripe, Datadog, Vercel, Jump Trading, DRW |
-| Lever      | OpenAI (when slug works) |
-| Ashby      | Ramp, Plaid, Cursor, Linear, Notion, Perplexity |
+| Lever      | Mistral, Spotify |
+| Ashby      | OpenAI, Ramp, Plaid, Cursor, Linear, Notion, Perplexity |
 | Amazon Jobs| Amazon, AWS |
+| Netflix    | Netflix (Eightfold positions API) |
 | Workday    | NVIDIA (extensible to IBM, Adobe, Cisco, etc.) |
+| Aggregators| Adzuna, Remotive, JobSpy (optional, enabled per source in `preferences`) |
 
-**Filter:** NYC-area or US-wide remote only. State-specific remote in other states (CA, WA, TX, etc.) is blocked.
+**Filter:** config-driven via `preferences` in `profile.yaml` (`home_terms`, `home_states`, `remote_scope`). Jobs in your home area pass, and remote roles pass per your `remote_scope`. Remote roles restricted to some other state are blocked.
 
 **Not covered** (no clean public API as of May 2026): Apple, Google, Microsoft, Meta. These run closed SPAs requiring login.
 
@@ -57,12 +59,13 @@ Public ATS APIs we pull from (read-only, no auth, all candidate-facing endpoints
 ```
 ~/.jobhunt_mcp/
 ├── output/
-│   ├── resumes/          ← tailored PDFs
+│   ├── resumes/          ← rendered resume PDFs
 │   └── covers/           ← saved cover letters
 ├── tracker.sqlite        ← job state (status, posted_at, dismissed, etc.) — 0600
 ├── targets.yaml          ← companies to track
 ├── briefing.log          ← log of 9am runs
-└── telegram.conf         ← bot creds — 0600
+└── briefing.conf         ← API keys + delivery creds (Telegram/SMTP) — 0600
+                            (telegram.conf still works as a legacy fallback)
 ```
 
 **Quick open:**

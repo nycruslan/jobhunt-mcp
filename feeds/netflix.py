@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 
 import requests
 
+import config
 from feeds._http import build_session, html_to_text, DEFAULT_TIMEOUT
 from feeds._location import is_local_or_remote
 from feeds._comp import parse_comp
@@ -47,25 +49,30 @@ def _fetch_jd(raw_id: str) -> str:
         return ""
 
 
-def fetch_jobs(slug: str = "", keyword: str = "") -> list[dict]:
-    """Fetch NYC/remote Netflix engineering roles. slug ignored (signature parity)."""
+def fetch_jobs() -> list[dict]:
+    """Fetch home-area/remote Netflix engineering roles.
+
+    Request errors propagate to the caller (feeds.pull records them per company).
+    """
+    # Eightfold's location param wants a city string; derive it from the profile
+    # so this works for any home base, not just NYC.
+    home = (config.preferences().get("home_terms") or ["New York"])[0].title()
+
     seen: set[str] = set()
     jobs: list[dict] = []
 
-    for q in _QUERIES:
+    for i, q in enumerate(_QUERIES):
+        if i:
+            time.sleep(0.5)  # polite pause between queries
         params = {
             "domain":   "netflix.com",
-            "query":    keyword or q,
-            "location": "New York",
+            "query":    q,
+            "location": home,
             "start":    0,
             "num":      _PER_QUERY,
         }
-        try:
-            r = SESSION.get(BASE, params=params, timeout=DEFAULT_TIMEOUT)
-            r.raise_for_status()
-        except requests.RequestException as e:
-            log.warning("Netflix fetch failed for '%s': %s", q, e)
-            continue
+        r = SESSION.get(BASE, params=params, timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
 
         for p in r.json().get("positions", []):
             raw_id = str(p.get("id") or p.get("ats_job_id") or "")
@@ -85,6 +92,12 @@ def fetch_jobs(slug: str = "", keyword: str = "") -> list[dict]:
             if not jd and len(jobs) < _JD_CAP:
                 jd = _fetch_jd(raw_id)
                 time.sleep(0.3)
+
+            # Positions carry epoch-second create/update stamps (live-verified).
+            ts = p.get("t_create") or p.get("t_update")
+            posted = (datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+                      if ts else "")
+
             jobs.append({
                 "id":        f"nf_{raw_id}",
                 "ats":       "netflix",
@@ -95,9 +108,8 @@ def fetch_jobs(slug: str = "", keyword: str = "") -> list[dict]:
                 "remote":    "remote" in (primary or "").lower(),
                 "jd_text":   jd,
                 "comp":      parse_comp(jd),
-                "posted_at": "",
+                "posted_at": posted,
             })
-        time.sleep(0.5)
 
     log.info("Netflix: %d NYC/remote jobs", len(jobs))
     return jobs

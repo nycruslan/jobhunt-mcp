@@ -9,25 +9,36 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+import config
+
 CSV_PATH = Path(__file__).parent / "linkedin.csv"
 
 
-@lru_cache(maxsize=1)
+@config.mtime_cached(CSV_PATH)
 def _load_connections() -> list[dict]:
-    """Load and cache all connections from the LinkedIn export CSV."""
+    """Load all connections from the LinkedIn export CSV. Cached until the
+    file's mtime changes, so replacing linkedin.csv takes effect without an
+    MCP server restart."""
     if not CSV_PATH.exists():
         return []
 
-    connections = []
     with open(CSV_PATH, encoding="utf-8-sig") as f:
         # LinkedIn adds a notes block before the actual CSV header — skip it
         lines = f.readlines()
-        start = 0
+        start = None
         for i, line in enumerate(lines):
             if line.strip().startswith("First Name"):
                 start = i
                 break
+        if start is None:
+            raise ValueError(
+                f"{CSV_PATH} doesn't look like a LinkedIn connections export: "
+                "no 'First Name,Last Name,...' header row found. Re-export your "
+                "connections from LinkedIn (Settings > Data privacy > Get a copy "
+                "of your data) and copy the Connections.csv here unmodified."
+            )
 
+        connections = []
         reader = csv.DictReader(lines[start:])
         for row in reader:
             company = (row.get("Company") or "").strip()
@@ -48,11 +59,19 @@ def _load_connections() -> list[dict]:
 def find_contacts(company_name: str) -> list[dict]:
     """
     Find LinkedIn connections who work at company_name.
-    Uses fuzzy matching to handle variants (e.g. 'JPMorgan' vs 'JPMorgan Chase').
+    Uses fuzzy token matching to handle variants: a query of 'JPMorgan Chase'
+    matches a CSV entry of 'JPMorgan' (and vice versa) because one side's
+    significant tokens are a subset of the other's.
     """
-    connections = _load_connections()
-    pattern = _build_pattern(company_name)
-    return [c for c in connections if pattern.search(c["company"])]
+    query = _tokens(company_name)
+    if not query:
+        return []
+    matches = []
+    for c in _load_connections():
+        toks = _tokens(c["company"])
+        if toks and (query <= toks or toks <= query):
+            matches.append(c)
+    return matches
 
 
 def total_connections() -> int:
@@ -67,16 +86,21 @@ _GENERIC_TOKENS = {
     "software", "digital", "data", "services", "tech", "studio", "studios",
 }
 
+_LEGAL_SUFFIXES = re.compile(r"\b(inc|llc|ltd|corp|co|and|the)\b", re.I)
 
-def _build_pattern(name: str) -> re.Pattern:
-    """Regex that matches a company's distinctive tokens with word boundaries.
 
-    Requires ALL significant tokens to appear (AND, not OR) so "Scale AI" doesn't
-    match every "...AI" company, and drops generic words that carry no signal."""
-    clean = re.sub(r"\b(inc|llc|ltd|corp|co|&|and|the)\b", "", name, flags=re.I)
-    tokens = [w for w in clean.split() if len(w) > 2 and w.lower() not in _GENERIC_TOKENS]
-    if not tokens:  # name was all-generic (e.g. "AI Labs") — fall back to the raw name
-        tokens = [clean.strip() or name]
-    # Each token must be present as a whole word, in any order.
-    body = "".join(rf"(?=.*\b{re.escape(t)}\b)" for t in tokens)
-    return re.compile(body, re.IGNORECASE)
+@lru_cache(maxsize=4096)
+def _tokens(name: str) -> frozenset[str]:
+    """A company name's significant tokens, lower-cased.
+
+    '&' and other punctuation separate tokens (so "AT&T" -> {"at", "t"} and
+    "H&M" -> {"h", "m"} instead of being mangled). Legal suffixes and generic
+    words are dropped, as are tokens of <= 2 chars — unless that filter would
+    empty the set (e.g. "HP", "EA", "AT&T"), in which case every word is kept
+    so short names stay matchable."""
+    clean = _LEGAL_SUFFIXES.sub(" ", name)
+    words = [w.lower() for w in re.findall(r"[a-z0-9']+", clean, re.I)]
+    toks = [w for w in words if len(w) > 2 and w not in _GENERIC_TOKENS]
+    if not toks:  # name was all-short or all-generic — fall back to every word
+        toks = words
+    return frozenset(toks)

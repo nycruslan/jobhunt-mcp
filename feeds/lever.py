@@ -19,6 +19,8 @@ log = logging.getLogger(__name__)
 
 BASE = "https://api.lever.co/v0/postings"
 SESSION = build_session()
+PAGE_LIMIT = 250  # Lever's per-request max
+MAX_PAGES  = 4
 
 
 def _comp_from_salary_range(sr: dict) -> str:
@@ -28,37 +30,53 @@ def _comp_from_salary_range(sr: dict) -> str:
     return comp_from_amounts(sr.get("min"), sr.get("max"), sr.get("interval", ""))
 
 
-def fetch_jobs(slug: str, keyword: str = "") -> list[dict]:
-    """Fetch jobs from a Lever board. Returns normalized dicts."""
-    try:
-        r = SESSION.get(f"{BASE}/{slug}", params={"mode": "json", "limit": 250},
-                        timeout=DEFAULT_TIMEOUT)
-        r.raise_for_status()
-    except requests.HTTPError as e:
-        if e.response is not None and e.response.status_code == 404:
-            log.warning("Lever slug not found: %s", slug)
-            return []
-        log.error("Lever fetch failed for %s: %s", slug, e)
-        return []
-    except requests.RequestException as e:
-        log.error("Lever fetch failed for %s: %s", slug, e)
-        return []
+def fetch_jobs(slug: str) -> list[dict]:
+    """Fetch jobs from a Lever board, paginated via `skip`. Returns normalized dicts.
+
+    Request errors propagate to the caller (feeds.pull records them per company);
+    only a 404 — dead slug — is handled here as a warning + empty list.
+    """
+    postings: list[dict] = []
+    for page in range(MAX_PAGES):
+        if page:
+            time.sleep(0.5)  # polite pause between pages
+        r = SESSION.get(
+            f"{BASE}/{slug}",
+            params={"mode": "json", "limit": PAGE_LIMIT, "skip": page * PAGE_LIMIT},
+            timeout=DEFAULT_TIMEOUT,
+        )
+        try:
+            r.raise_for_status()
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                log.warning("Lever slug not found: %s", slug)
+                return []
+            raise
+        batch = r.json()
+        postings.extend(batch)
+        if len(batch) < PAGE_LIMIT:
+            break
+
+    if not postings:
+        # 200 with an empty board usually means the company left Lever
+        # (plaid/voleon rotted this way) — worth flagging, not an error.
+        log.warning("Lever board %s returned 0 postings — dead slug?", slug)
 
     jobs: list[dict] = []
-    for j in r.json():
+    for j in postings:
         loc = j.get("categories", {}).get("location", "")
         if not is_local_or_remote(loc):
             continue
 
         title = j.get("text", "")
-        if keyword and keyword.lower() not in title.lower():
-            continue
 
-        # JD text — join all section "text" + cleaned bullet items
-        jd_parts: list[str] = []
+        # JD text — the pay-transparency block lives in descriptionPlain (and
+        # sometimes additionalPlain), not in the lists[] sections.
+        jd_parts: list[str] = [j.get("descriptionPlain", "")]
         for section in j.get("lists", []):
             jd_parts.append(section.get("text", ""))
             jd_parts.append(html_to_text(section.get("content", "")))
+        jd_parts.append(j.get("additionalPlain", ""))
         jd_text = "\n".join(p for p in jd_parts if p).strip()
 
         # createdAt comes as ms-since-epoch
@@ -83,5 +101,4 @@ def fetch_jobs(slug: str, keyword: str = "") -> list[dict]:
             "posted_at": posted_iso,
         })
 
-    time.sleep(0.5)
     return jobs

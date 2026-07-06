@@ -4,6 +4,7 @@ All state lives locally at ~/.jobhunt_mcp/tracker.sqlite
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     score         INTEGER DEFAULT 0,
     status        TEXT DEFAULT 'new',
     fetched_at    TEXT,
+    last_seen     TEXT,
     posted_at     TEXT,
     applied_at    TEXT,
     dismissed     INTEGER DEFAULT 0,
@@ -47,9 +49,13 @@ VALID_STATUSES = {"new", "reviewed", "drafted", "applied", "screen", "onsite", "
 
 @contextmanager
 def _conn():
-    con = sqlite3.connect(DB_PATH)
+    # The MCP server, the launchd briefing, and the autosync agent can all touch
+    # this DB at once; WAL plus a generous busy timeout keeps writers queued
+    # instead of raising "database is locked".
+    con = sqlite3.connect(DB_PATH, timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA busy_timeout=10000")
     try:
         yield con
         con.commit()
@@ -68,6 +74,13 @@ def _migrate(con) -> None:
     have = {r["name"] for r in con.execute("PRAGMA table_info(jobs)").fetchall()}
     if "comp" not in have:
         con.execute("ALTER TABLE jobs ADD COLUMN comp TEXT")
+    if "last_seen" not in have:
+        con.execute("ALTER TABLE jobs ADD COLUMN last_seen TEXT")
+        # Backfill so existing rows have a baseline; first refresh bumps it.
+        con.execute("UPDATE jobs SET last_seen = fetched_at WHERE last_seen IS NULL")
+    # Left over from a dedup pass that no longer exists; every insert paid for it.
+    con.execute("DROP INDEX IF EXISTS idx_jobs_company_title")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status)")
 
 
 def upsert_job(job: dict) -> bool:
@@ -76,8 +89,10 @@ def upsert_job(job: dict) -> bool:
 
     On refresh: re-score and update the live fields (title/location/url/remote),
     and fill comp/jd_text/posted_at only when the new fetch actually has a value
-    so a richer earlier fetch is never wiped by a thinner later one. fetched_at,
-    status, applied_at, dismissed, and the resume/cover paths are left alone."""
+    so a richer earlier fetch is never wiped by a thinner later one. last_seen is
+    bumped every time the posting is observed; fetched_at, status, applied_at,
+    dismissed, and the resume/cover paths are left alone."""
+    ts = now()
     params = {
         "id":        job["id"],
         "company":   _normalize_company(job["company"]),
@@ -90,30 +105,30 @@ def upsert_job(job: dict) -> bool:
         "comp":      job.get("comp", "") or "",
         "score":     job.get("score", 0),
         "posted_at": job.get("posted_at", "") or "",
+        "last_seen": ts,
     }
     with _conn() as con:
-        existing = con.execute("SELECT id FROM jobs WHERE id = ?", (job["id"],)).fetchone()
-        if existing:
-            con.execute(
-                """UPDATE jobs SET
-                       title    = :title,
-                       location = :location,
-                       url      = :url,
-                       remote   = :remote,
-                       score    = :score,
-                       jd_text   = CASE WHEN :jd_text   != '' THEN :jd_text   ELSE jd_text   END,
-                       comp      = CASE WHEN :comp      != '' THEN :comp      ELSE comp      END,
-                       posted_at = CASE WHEN :posted_at != '' THEN :posted_at ELSE posted_at END
-                   WHERE id = :id""",
-                params,
-            )
-            return False
+        # Single-statement upsert: a concurrent pull (launchd briefing + an
+        # interactive refresh) inserting the same id can no longer raise
+        # IntegrityError mid-run. The existence probe only decides the return
+        # value; a lost race there just miscounts "new" by one, harmlessly.
+        existed = con.execute("SELECT 1 FROM jobs WHERE id = ?", (job["id"],)).fetchone() is not None
         con.execute(
-            """INSERT INTO jobs (id, company, title, location, url, remote, jd_text, ats, comp, score, fetched_at, posted_at)
-               VALUES (:id, :company, :title, :location, :url, :remote, :jd_text, :ats, :comp, :score, :fetched_at, :posted_at)""",
-            {**params, "fetched_at": now()},
+            """INSERT INTO jobs (id, company, title, location, url, remote, jd_text, ats, comp, score, fetched_at, last_seen, posted_at)
+               VALUES (:id, :company, :title, :location, :url, :remote, :jd_text, :ats, :comp, :score, :fetched_at, :last_seen, :posted_at)
+               ON CONFLICT(id) DO UPDATE SET
+                   title     = excluded.title,
+                   location  = excluded.location,
+                   url       = excluded.url,
+                   remote    = excluded.remote,
+                   score     = excluded.score,
+                   last_seen = excluded.last_seen,
+                   jd_text   = CASE WHEN excluded.jd_text   != '' THEN excluded.jd_text   ELSE jobs.jd_text   END,
+                   comp      = CASE WHEN excluded.comp      != '' THEN excluded.comp      ELSE jobs.comp      END,
+                   posted_at = CASE WHEN excluded.posted_at != '' THEN excluded.posted_at ELSE jobs.posted_at END""",
+            {**params, "fetched_at": ts},
         )
-        return True
+        return not existed
 
 
 def _normalize_company(name: str) -> str:
@@ -122,6 +137,7 @@ def _normalize_company(name: str) -> str:
     all-caps tokens (IBM, PPS) and mixed-case brands (OpenAI, xAI) survive verbatim."""
     if not name:
         return name
+    name = _strip_company_noise(name)
     alias = config.company_aliases().get(name.strip().lower())
     if alias:
         return alias
@@ -147,22 +163,57 @@ def _normalize_company(name: str) -> str:
     return " ".join(parts)
 
 
+_NOISE_SUFFIX_RE = re.compile(
+    r"\s*(?:[-–—|,]\s*)?\b(careers?|jobs|hiring|talent|recruiting)\b\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_company_noise(name: str) -> str:
+    """Drop trailing portal cruft aggregators tack on, e.g.
+    'Disney ... Technology Careers' -> 'Disney ... Technology'. Iterates so a
+    doubled suffix ('... Jobs Careers') collapses. Never returns empty."""
+    prev = None
+    out = name.strip()
+    while out and out != prev:
+        prev = out
+        out = _NOISE_SUFFIX_RE.sub("", out).strip()
+    return out or name.strip()
+
+
 def get_job(job_id: str) -> Optional[dict]:
     with _conn() as con:
         row = con.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return dict(row) if row else None
 
 
-def update_status(job_id: str, status: str, **kwargs) -> None:
+# The only columns a status change may touch besides status itself. Keys are
+# whitelisted because they end up in the SQL text.
+_STATUS_EXTRA_COLS = {"applied_at", "resume_path", "cover_path"}
+
+
+def update_status(job_id: str, status: str, note: str = "", **kwargs) -> bool:
+    """Change a job's status. `note` is appended to existing notes atomically
+    (read-modify-write in Python lost concurrent updates). Returns False when the
+    row no longer exists (e.g. purged between match and write) so callers can
+    surface it instead of silently succeeding."""
     if status not in VALID_STATUSES:
         raise ValueError(f"Invalid status: {status}. Choose from: {VALID_STATUSES}")
+    unknown = set(kwargs) - _STATUS_EXTRA_COLS
+    if unknown:
+        raise ValueError(f"Refusing to update columns: {unknown}")
     fields = {"status": status}
     if status == "applied":
         fields["applied_at"] = now()
     fields.update(kwargs)
     cols = ", ".join(f"{k} = ?" for k in fields)
+    params: list = list(fields.values())
+    if note:
+        cols += ", notes = CASE WHEN notes IS NULL OR notes = '' THEN ? ELSE notes || ' | ' || ? END"
+        params += [note, note]
     with _conn() as con:
-        con.execute(f"UPDATE jobs SET {cols} WHERE id = ?", (*fields.values(), job_id))
+        cur = con.execute(f"UPDATE jobs SET {cols} WHERE id = ?", (*params, job_id))
+        return cur.rowcount > 0
 
 
 def dismiss_job(job_id: str) -> bool:
@@ -202,6 +253,11 @@ def get_active_snoozes() -> dict[str, str]:
         return {r["company"]: r["snoozed_until"] for r in rows}
 
 
+def _like_escape(text: str) -> str:
+    """Escape LIKE wildcards in user input so 'C++' or '100%' match literally."""
+    return text.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+
+
 def _snooze_filter() -> tuple[str, list[str]]:
     """SQL fragment + params that exclude companies under an active snooze.
     Returns ('', []) when nothing is snoozed so the query is left untouched."""
@@ -229,9 +285,11 @@ def get_new_since(since_iso: str, min_score: int = 0) -> list[dict]:
 
 
 def get_today_new(min_score: int = 0) -> list[dict]:
-    """Jobs fetched today not yet reviewed. Excludes dismissed and snoozed companies."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    return get_new_since(f"{today}T00:00:00+00:00", min_score=min_score)
+    """Jobs fetched today not yet reviewed. Excludes dismissed and snoozed companies.
+    'Today' starts at local midnight (fetched_at is stored in UTC; a UTC boundary
+    made evening pulls eat the next morning's briefing for a New York user)."""
+    local_midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    return get_new_since(local_midnight.astimezone(timezone.utc).isoformat(), min_score=min_score)
 
 
 def search_jobs(
@@ -254,12 +312,13 @@ def search_jobs(
         params.append(status)
 
     if company:
-        conditions.append("LOWER(company) LIKE ?")
-        params.append(f"%{company.lower()}%")
+        conditions.append(r"LOWER(company) LIKE ? ESCAPE '\'")
+        params.append(f"%{_like_escape(company.lower())}%")
 
     if query:
-        conditions.append("(LOWER(title) LIKE ? OR LOWER(jd_text) LIKE ?)")
-        params.extend([f"%{query.lower()}%", f"%{query.lower()}%"])
+        conditions.append(r"(LOWER(title) LIKE ? ESCAPE '\' OR LOWER(jd_text) LIKE ? ESCAPE '\')")
+        q = f"%{_like_escape(query.lower())}%"
+        params.extend([q, q])
 
     where = " AND ".join(conditions)
     snooze_sql, snooze_params = _snooze_filter()
@@ -320,6 +379,20 @@ def funnel_stats() -> dict:
     }
 
 
+def find_jobs_by_status(statuses: tuple[str, ...]) -> list[dict]:
+    """All non-dismissed jobs in any of `statuses`. Used by the automation matcher
+    to find which application a recruiter email or confirmation refers to."""
+    if not statuses:
+        return []
+    placeholders = ",".join("?" * len(statuses))
+    with _conn() as con:
+        rows = con.execute(
+            f"SELECT * FROM jobs WHERE status IN ({placeholders}) AND dismissed = 0",
+            tuple(statuses),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def active_applications() -> list[dict]:
     """Jobs in an active application stage (applied/screen/onsite), newest first.
     This is what an email-sync pass checks for recruiter updates."""
@@ -334,17 +407,57 @@ def active_applications() -> list[dict]:
 
 
 def applied_count_by_company(days: int = 7) -> dict[str, int]:
-    """How many roles applied to per company in the last N days."""
+    """How many roles applied to per company in the last N days. Keyed on
+    applied_at alone so applications that later ended in rejected/withdrawn
+    still count — this measures volume, not outcome."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     with _conn() as con:
         rows = con.execute(
             """SELECT company, COUNT(*) as cnt FROM jobs
-               WHERE status IN ('applied','screen','onsite','offer')
+               WHERE applied_at IS NOT NULL
                AND applied_at >= ?
                GROUP BY company""",
             (cutoff,),
         ).fetchall()
         return {r["company"]: r["cnt"] for r in rows}
+
+
+def backup_db(dest) -> None:
+    """Write a consistent snapshot of the DB to `dest` via SQLite's backup API
+    (WAL-safe, unlike a plain file copy). Used before the destructive stale purge."""
+    with _conn() as con:
+        dst = sqlite3.connect(str(dest))
+        try:
+            con.backup(dst)
+        finally:
+            dst.close()
+
+
+_STALE_WHERE = """status = 'new'
+               AND dismissed = 0
+               AND COALESCE(last_seen, fetched_at) < ?"""
+
+
+def count_stale_jobs(days: int = 21) -> int:
+    """How many rows purge_stale_jobs would delete. Lets callers skip the
+    pre-purge backup when there is nothing to purge."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _conn() as con:
+        return con.execute(f"SELECT COUNT(*) FROM jobs WHERE {_STALE_WHERE}", (cutoff,)).fetchone()[0]
+
+
+def purge_stale_jobs(days: int = 21) -> int:
+    """Delete untouched 'new' postings not seen by any feed in `days` days.
+
+    Only removes rows the user never acted on (status still 'new', not applied,
+    drafted, reviewed, etc.). Anything in the pipeline is kept regardless of age,
+    so application history is never lost. Dismissed rows are kept as tombstones:
+    deleting them would resurrect the posting if it is ever re-listed under a new
+    id. Returns the number of rows removed."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _conn() as con:
+        cur = con.execute(f"DELETE FROM jobs WHERE {_STALE_WHERE}", (cutoff,))
+        return cur.rowcount
 
 
 def now() -> str:

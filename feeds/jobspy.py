@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import warnings
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -31,14 +31,23 @@ _INDEED_SEARCHES = [
     "senior ML engineer",
 ]
 
-_GOOGLE_SEARCH_TERM = (
-    "senior software engineer AI machine learning New York NYC remote site:jobs.google.com OR"
-    " site:greenhouse.io OR site:lever.co"
-)
-
-_LOCATION    = "New York, NY"
 _RESULTS_PER = 25   # per search term on Indeed
 _HOURS_OLD   = 48   # on weekdays; callers may override
+
+
+def _search_location() -> str:
+    """'City, ST' search anchor derived from profile preferences, not hardcoded."""
+    import config
+
+    p = config.preferences()
+    city  = (p.get("home_terms") or ["new york"])[0].title()
+    state = (p.get("home_states") or ["NY"])[0].upper()
+    return f"{city}, {state}"
+
+
+def _google_search_term(city: str) -> str:
+    return (f"senior software engineer AI machine learning {city} remote"
+            " site:jobs.google.com OR site:greenhouse.io OR site:lever.co")
 
 
 def _hours_window() -> int:
@@ -60,6 +69,31 @@ def _to_iso(d: Any) -> str:
         except ValueError:
             pass
     return ""
+
+
+# Query params that are pure tracking noise. Everything else stays — Indeed's
+# job identity lives in the query string (viewjob?jk=<id>), so stripping it
+# whole collapsed every Indeed job to one id.
+_TRACKING_PARAMS = ("gclid", "fbclid", "ref", "source")
+
+
+def _url_hash(url: str) -> str:
+    """12-char stable hash of a URL with tracking params and fragment removed.
+
+    Remaining params are sorted so reordering doesn't change the id."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    if not url:
+        return hashlib.sha1(b"").hexdigest()[:12]
+    parts = urlsplit(url)
+    params = sorted(
+        (k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        if not (k.startswith("utm_") or k in _TRACKING_PARAMS)
+    )
+    canonical = urlunsplit(
+        (parts.scheme, parts.netloc, parts.path.rstrip("/"), urlencode(params), "")
+    )
+    return hashlib.sha1(canonical.encode()).hexdigest()[:12]
 
 
 def _safe_str(val: Any) -> str:
@@ -105,9 +139,10 @@ def _job_from_row(row: Any) -> dict:
     direct_url = _safe_str(row.get("job_url_direct"))
     apply_url  = direct_url or url
 
-    # Stable ID: hash of the canonical URL so the same posting is idempotent
-    url_hash = hashlib.sha1(url.encode()).hexdigest()[:12]
-    job_id   = f"js_{url_hash}"
+    # Stable ID: hash the URL with tracking params + fragment stripped, so the
+    # same posting stays idempotent across runs even when Indeed/Google append
+    # rotating utm noise, while distinct jobs (?jk=<id>) keep distinct ids.
+    job_id   = f"js_{_url_hash(url)}"
 
     jd_text = _safe_str(row.get("description"))
 
@@ -121,7 +156,6 @@ def _job_from_row(row: Any) -> dict:
         "comp":      _comp_from_row(row, jd_text),
         "posted_at": _to_iso(row.get("date_posted")),
         "remote":    bool(row.get("is_remote")),
-        "source":    "jobspy",
     }
 
 
@@ -134,16 +168,19 @@ def fetch_jobs(hours_old: int | None = None) -> list[dict]:
     """
     try:
         from jobspy import scrape_jobs  # type: ignore
-        import pandas as pd
-    except ImportError:
-        log.error("python-jobspy not installed. Run: pip3.11 install python-jobspy")
-        return []
+    except ImportError as exc:
+        # Surface as a real failure so pull() reports it instead of "0 jobs".
+        raise RuntimeError(
+            "python-jobspy not installed. Run: pip3.11 install python-jobspy"
+        ) from exc
 
     from feeds._location import is_local_or_remote
 
-    hours = hours_old if hours_old is not None else _hours_window()
+    hours    = hours_old if hours_old is not None else _hours_window()
+    location = _search_location()
     seen_urls: set[str] = set()
     results: list[dict] = []
+    term_errors: list[Exception] = []
 
     # ── Indeed: multiple search terms, deduplicated ────────────────────────
     for term in _INDEED_SEARCHES:
@@ -153,7 +190,7 @@ def fetch_jobs(hours_old: int | None = None) -> list[dict]:
                 df = scrape_jobs(
                     site_name=["indeed"],
                     search_term=term,
-                    location=_LOCATION,
+                    location=location,
                     results_wanted=_RESULTS_PER,
                     hours_old=hours,
                     country_indeed="usa",
@@ -173,6 +210,11 @@ def fetch_jobs(hours_old: int | None = None) -> list[dict]:
                     results.append(job)
         except Exception as exc:
             log.warning("JobSpy/Indeed error for term '%s': %s", term, exc)
+            term_errors.append(exc)
+
+    # Every term failing is an outage, not an empty market — surface it.
+    if term_errors and len(term_errors) == len(_INDEED_SEARCHES):
+        raise term_errors[-1]
 
     # ── Google Jobs: best-effort, skip silently if empty/fails ────────────
     try:
@@ -180,8 +222,8 @@ def fetch_jobs(hours_old: int | None = None) -> list[dict]:
             warnings.simplefilter("ignore")
             gdf = scrape_jobs(
                 site_name=["google"],
-                google_search_term=_GOOGLE_SEARCH_TERM,
-                location=_LOCATION,
+                google_search_term=_google_search_term(location.split(",")[0]),
+                location=location,
                 results_wanted=20,
                 hours_old=hours,
                 verbose=0,

@@ -13,7 +13,6 @@ roles at top targets land 75-95.
 from __future__ import annotations
 
 import re
-from functools import lru_cache
 from pathlib import Path
 
 import yaml
@@ -33,17 +32,21 @@ _SENIORITY_RE = re.compile(
 )
 _JUNIOR_RE = re.compile(
     r"\b(intern|internship|co-?op|new ?grad|university|apprentice|graduate program"
-    r"|associate|junior|jr\.?|entry[ -]?level|\bi{1,3}\b|\b1\b|\b2\b)\b",
+    r"|associate|junior|jr\.?|entry[ -]?level|level\s*[i1]\b|\bi\b|\b1\b)\b",
     re.IGNORECASE,
 )
-# Titles the candidate does not want — disqualify hard.
+# Titles the candidate does not want — disqualify hard. Tokens are role
+# head-nouns ("operations manager", "customer support"), not bare modifiers,
+# so "Software Engineer, Machine Learning Operations" can't get caught.
 _OFFROLE_RE = re.compile(
-    r"\b(sales|account executive|recruit|talent|people partner|marketing|brand"
-    r"|designer|ux research|technical writer|support|customer success|hardware|asic"
+    r"\b(sales|account executive|recruit|talent acquisition|people partner|marketing|brand"
+    r"|designer|ux research|technical writer|customer support|technical support"
+    r"|support (?:specialist|representative|agent)|customer success|hardware engineer|asic"
     r"|firmware|mechanical|electrical|optical|rf engineer|validation|test technician"
     r"|clinical|nurse|accountant|\btax\b|auditor?|legal counsel|go-to-market|\bgtm\b"
-    r"|field engineer|solutions architect|sales engineer|partner manager|operations"
-    r"|program manager|product manager|project manager|scrum master|community)\b",
+    r"|field engineer|solutions architect|sales engineer|partner manager"
+    r"|operations manager|business operations|people operations|program manager"
+    r"|product manager|project manager|scrum master|community manager)\b",
     re.IGNORECASE,
 )
 # Core role titles the candidate targets.
@@ -68,7 +71,7 @@ _AI_RE = re.compile(
 )
 
 
-@lru_cache(maxsize=1)
+@config.mtime_cached(config.PROFILE_PATH)
 def _weighted_skills() -> tuple[tuple[re.Pattern, float], ...]:
     """Compiled (word-boundary pattern, weight) for every categorized resume skill."""
     out: list[tuple[re.Pattern, float]] = []
@@ -86,17 +89,17 @@ def _weighted_skills() -> tuple[tuple[re.Pattern, float], ...]:
     return tuple(out)
 
 
-@lru_cache(maxsize=1)
+@config.mtime_cached(config.PROFILE_PATH)
 def _skills_flat() -> tuple[str, ...]:
     return tuple(s.lower() for s in config.profile().get("all_skills_flat", []))
 
 
-@lru_cache(maxsize=1)
+@config.mtime_cached(_TARGETS)
 def _targets() -> dict:
     return yaml.safe_load(_TARGETS.read_text())
 
 
-@lru_cache(maxsize=1)
+@config.mtime_cached(_TARGETS)
 def _company_index() -> dict:
     """company_lower -> {tc_max, tc_range}. Built once from targets.yaml."""
     idx: dict[str, dict] = {}
@@ -133,14 +136,21 @@ def _role_fit(title: str) -> tuple[float, float]:
     pts = 0.0
     mult = 1.0
 
-    if _GOODROLE_RE.search(title):
+    is_senior = bool(_SENIORITY_RE.search(title))
+    is_good = bool(_GOODROLE_RE.search(title))
+    if is_good:
         pts += 10
-    if _SENIORITY_RE.search(title):
+    if is_senior:
         pts += 8
 
-    if _JUNIOR_RE.search(title):
+    # Junior penalty only when nothing marks the role as senior. Otherwise
+    # "Senior Software Engineer II" (the roman numeral is a level, not a rank)
+    # gets crushed to a new-grad score. A real senior signal always wins.
+    if _JUNIOR_RE.search(title) and not is_senior:
         mult *= 0.35
-    if _OFFROLE_RE.search(title):
+    # A title naming a target discipline is never off-role: "Senior Software
+    # Engineer, Hardware Infrastructure" is a software job with a modifier.
+    if _OFFROLE_RE.search(title) and not is_good:
         mult *= 0.25
     # Cyber/security with no AI angle: dampen, don't kill.
     if _CYBER_RE.search(title) and not _AI_RE.search(title):
@@ -172,13 +182,15 @@ def _comp_tc(comp_band: str) -> int:
 
 
 def _comp_fit(company: str, comp_band: str = "") -> float:
-    """0..32 — the compensation lever. Prefers the posting's real comp so roles at
-    companies outside targets.yaml are judged on actual pay, not list membership.
-    Falls back to the company band, then a modest baseline."""
+    """0..32 — the compensation lever. Posted bands are BASE salary while the
+    curated tc_range is TOTAL comp, so at a listed company the higher of the two
+    wins — disclosing pay can only help a company's rank, never hurt it. Roles
+    at companies outside targets.yaml are judged on the posting's actual pay,
+    then a modest baseline."""
     tc = _comp_tc(comp_band)
-    if tc <= 0:
-        info = _company_index().get((company or "").lower())
-        tc = info["tc_max"] if info else 0
+    info = _company_index().get((company or "").lower())
+    if info:
+        tc = max(tc, info["tc_max"])
     if tc <= 0:
         return 12.0  # unknown comp + off-list company: modest baseline, let role/skill fit decide
     # 1100K -> 32, 300K -> 12. Linear, clamped.
@@ -196,11 +208,6 @@ def score_job(title: str, jd_text: str, company: str = "", comp_band: str = "") 
     ai       = _ai_fit(combined)
     comp_pts = _comp_fit(company, comp_band)
     role_pts, role_mult = _role_fit(title)
-
-    # No JD text (e.g. Workday/NVIDIA): skill_fit is title-only and thin, so lean
-    # on role + comp and don't let an empty description sink a known target.
-    if not (jd_text or "").strip():
-        skill = max(skill, _skill_fit(title))
 
     raw = (skill + role_pts + ai + comp_pts) * role_mult
     return int(round(min(100.0, max(0.0, raw))))

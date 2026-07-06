@@ -14,7 +14,6 @@ so we check every location, not just the primary.
 from __future__ import annotations
 
 import logging
-import time
 
 import requests
 
@@ -45,20 +44,39 @@ def _all_locations(posting: dict) -> list[str]:
     return [l for l in locs if l]
 
 
-def fetch_jobs(slug: str, keyword: str = "") -> list[dict]:
-    """Fetch jobs from an Ashby board. Returns normalized dicts."""
+def _structured_comp(posting: dict) -> str:
+    """Ashby's structured compensation summary, when includeCompensation returns
+    one. Shape varies by board version, so probe defensively and return "" when
+    nothing usable is there."""
+    comp = posting.get("compensation")
+    if not isinstance(comp, dict):
+        return ""
+    summary = (comp.get("compensationTierSummary")
+               or comp.get("scrapeableCompensationSalarySummary")
+               or comp.get("summary") or "")
+    if not isinstance(summary, str) or not summary.strip():
+        return ""
+    summary = summary.strip()
+    # Normalize through the shared parser when it understands the summary;
+    # otherwise keep Ashby's own string — it's still real pay data.
+    return parse_comp(summary) or summary
+
+
+def fetch_jobs(slug: str) -> list[dict]:
+    """Fetch jobs from an Ashby board. Returns normalized dicts.
+
+    Request errors propagate to the caller (feeds.pull records them per company);
+    only a 404 — dead slug — is handled here as a warning + empty list.
+    """
+    r = SESSION.get(f"{BASE}/{slug}", params={"includeCompensation": "true"},
+                    timeout=DEFAULT_TIMEOUT)
     try:
-        r = SESSION.get(f"{BASE}/{slug}", timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
     except requests.HTTPError as e:
         if e.response is not None and e.response.status_code == 404:
             log.warning("Ashby slug not found: %s", slug)
             return []
-        log.error("Ashby fetch failed for %s: %s", slug, e)
-        return []
-    except requests.RequestException as e:
-        log.error("Ashby fetch failed for %s: %s", slug, e)
-        return []
+        raise
 
     data = r.json()
     company = data.get("organization", {}).get("name", "") or slug.replace("-", " ").title()
@@ -72,12 +90,11 @@ def fetch_jobs(slug: str, keyword: str = "") -> list[dict]:
             continue
 
         title = j.get("title", "")
-        if keyword and keyword.lower() not in title.lower():
-            continue
 
         jd_text = html_to_text(j.get("descriptionHtml") or j.get("description", ""))
-        # descriptionPlain (when present) is already clean text — better to scan.
-        comp = parse_comp(j.get("descriptionPlain") or jd_text)
+        # Structured compensation beats scraping; descriptionPlain (when present)
+        # is already clean text — better to scan than the stripped HTML.
+        comp = _structured_comp(j) or parse_comp(j.get("descriptionPlain") or jd_text)
 
         jobs.append({
             "id":        f"ab_{slug}_{j['id']}",
@@ -92,5 +109,4 @@ def fetch_jobs(slug: str, keyword: str = "") -> list[dict]:
             "posted_at": j.get("publishedDate", "") or j.get("publishedAt", ""),
         })
 
-    time.sleep(0.5)
     return jobs

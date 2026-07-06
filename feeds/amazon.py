@@ -1,15 +1,15 @@
 """
 Amazon Jobs public search API.
 Endpoint: https://www.amazon.jobs/en/search.json
-Public, candidate-facing. No auth. Cap is 100 results per request.
+Public, candidate-facing. No auth. Cap is 100 results per request; paginated
+via `offset`. Note: the API silently ignores `country[]` — the working US
+filter is `normalized_country_code[]=USA` (live-verified).
 """
 from __future__ import annotations
 
 import logging
 import time
 from datetime import datetime, timezone
-
-import requests
 
 from feeds._http import build_session, DEFAULT_TIMEOUT
 from feeds._location import is_local_or_remote
@@ -19,68 +19,67 @@ log = logging.getLogger(__name__)
 
 BASE         = "https://www.amazon.jobs/en/search.json"
 JOB_URL_BASE = "https://www.amazon.jobs"
-RESULT_LIMIT = 100  # Amazon's per-request max
+PAGE_LIMIT   = 100  # Amazon's per-request max
+MAX_PAGES    = 3
 SESSION      = build_session()
 
 
-def fetch_jobs(slug: str = "", keyword: str = "") -> list[dict]:
-    """Fetch recent Amazon software roles, NYC-filtered.
+def fetch_jobs() -> list[dict]:
+    """Fetch recent US Amazon software roles, NYC-filtered.
 
-    Args:
-        slug:    Ignored (signature consistency with other feeds).
-        keyword: Optional title keyword filter applied server-side.
+    Request errors propagate to the caller (feeds.pull records them per company).
     """
-    params: dict = {
-        "result_limit": RESULT_LIMIT,
-        "offset":       0,
-        "sort":         "recent",
-        "country[]":    "US",
-        "category[]":   "software-development",
-    }
-    if keyword:
-        params["base_query"] = keyword
-
-    try:
+    jobs: list[dict] = []
+    for page in range(MAX_PAGES):
+        if page:
+            time.sleep(0.5)  # polite pause between pages
+        params: dict = {
+            "result_limit":                PAGE_LIMIT,
+            "offset":                      page * PAGE_LIMIT,
+            "sort":                        "recent",
+            "normalized_country_code[]":   "USA",
+            "category[]":                  "software-development",
+        }
         r = SESSION.get(BASE, params=params, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
-    except requests.RequestException as e:
-        log.error("Amazon Jobs fetch failed: %s", e)
-        return []
 
-    jobs: list[dict] = []
-    for j in r.json().get("jobs", []):
-        loc = j.get("location") or j.get("normalized_location") or ""
-        if not is_local_or_remote(loc):
-            continue
+        page_jobs = r.json().get("jobs", [])
+        for j in page_jobs:
+            loc = j.get("location") or j.get("normalized_location") or ""
+            if not is_local_or_remote(loc):
+                continue
 
-        # Stable ID: prefer icims, fall back to internal id. Truthy check avoids 0 collision.
-        raw_id = j.get("id_icims") or j.get("id")
-        if not raw_id:
-            continue
+            # Stable ID: prefer icims, fall back to internal id. Truthy check avoids 0 collision.
+            # Prefix is amzn_ (not az_) so it never shares a namespace with Adzuna.
+            raw_id = j.get("id_icims") or j.get("id")
+            if not raw_id:
+                continue
 
-        path = j.get("job_path") or ""
-        url  = f"{JOB_URL_BASE}{path}" if path.startswith("/") else path
+            path = j.get("job_path") or ""
+            url  = f"{JOB_URL_BASE}{path}" if path.startswith("/") else path
 
-        jd_text = " ".join(filter(None, [
-            j.get("description"),
-            j.get("basic_qualifications"),
-            j.get("preferred_qualifications"),
-        ])).strip()
+            jd_text = " ".join(filter(None, [
+                j.get("description"),
+                j.get("basic_qualifications"),
+                j.get("preferred_qualifications"),
+            ])).strip()
 
-        jobs.append({
-            "id":        f"az_{raw_id}",
-            "ats":       "amazon",
-            "company":   "Amazon",
-            "title":     j.get("title", ""),
-            "location":  loc,
-            "url":       url,
-            "remote":    "remote" in loc.lower() or "virtual" in loc.lower(),
-            "jd_text":   jd_text,
-            "comp":      parse_comp(jd_text),
-            "posted_at": _parse_posted(j.get("posted_date", "")),
-        })
+            jobs.append({
+                "id":        f"amzn_{raw_id}",
+                "ats":       "amazon",
+                "company":   "Amazon",
+                "title":     j.get("title", ""),
+                "location":  loc,
+                "url":       url,
+                "remote":    "remote" in loc.lower() or "virtual" in loc.lower(),
+                "jd_text":   jd_text,
+                "comp":      parse_comp(jd_text),
+                "posted_at": _parse_posted(j.get("posted_date", "")),
+            })
 
-    time.sleep(0.5)
+        if len(page_jobs) < PAGE_LIMIT:
+            break
+
     return jobs
 
 

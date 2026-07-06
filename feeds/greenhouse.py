@@ -6,7 +6,6 @@ Fully public, candidate-facing. No auth.
 from __future__ import annotations
 
 import logging
-import time
 
 import requests
 
@@ -31,27 +30,26 @@ def _comp_from_pay_ranges(ranges: list) -> str:
     return ""
 
 
-def fetch_jobs(slug: str, keyword: str = "") -> list[dict]:
-    """Fetch jobs from a Greenhouse board. Returns normalized dicts."""
-    params = {"content": "true", "pay_transparency": "true"}
-    if keyword:
-        params["q"] = keyword
+def fetch_jobs(slug: str) -> list[dict]:
+    """Fetch jobs from a Greenhouse board. Returns normalized dicts.
 
+    Request errors propagate to the caller (feeds.pull records them per company);
+    only a 404 — dead slug — is handled here as a warning + empty list.
+    """
+    # The list endpoint honors pay_transparency (verified); a `q` keyword param
+    # is silently ignored, so we don't send one.
+    params = {"content": "true", "pay_transparency": "true"}
+
+    r = SESSION.get(f"{BASE}/{slug}/jobs", params=params, timeout=DEFAULT_TIMEOUT)
     try:
-        r = SESSION.get(f"{BASE}/{slug}/jobs", params=params, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
     except requests.HTTPError as e:
         if e.response is not None and e.response.status_code == 404:
             log.warning("Greenhouse slug not found: %s", slug)
             return []
-        log.error("Greenhouse fetch failed for %s: %s", slug, e)
-        return []
-    except requests.RequestException as e:
-        log.error("Greenhouse fetch failed for %s: %s", slug, e)
-        return []
+        raise
 
     raw = r.json()
-    company = raw.get("company", {}).get("name", slug)
     jobs: list[dict] = []
 
     for j in raw.get("jobs", []):
@@ -65,15 +63,17 @@ def fetch_jobs(slug: str, keyword: str = "") -> list[dict]:
         jobs.append({
             "id":        f"gh_{slug}_{j['id']}",
             "ats":       "greenhouse",
-            "company":   company,
+            # The board payload has no top-level company; each job carries it.
+            "company":   j.get("company_name") or slug,
             "title":     j.get("title", ""),
             "location":  loc,
             "url":       j.get("absolute_url", ""),
             "remote":    "remote" in loc.lower(),
             "jd_text":   jd_text,
             "comp":      comp,
-            "posted_at": j.get("updated_at", "") or j.get("first_published", ""),
+            # first_published is when candidates first saw it; updated_at moves
+            # on any edit and inflates freshness.
+            "posted_at": j.get("first_published", "") or j.get("updated_at", ""),
         })
 
-    time.sleep(0.5)  # polite pause
     return jobs

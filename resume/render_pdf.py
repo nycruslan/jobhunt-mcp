@@ -108,15 +108,12 @@ class _PDF(FPDF):
         self.set_text_color(*DARK_GRAY)
         self.multi_cell(0, LH_BODY, _strip(text), new_x="LMARGIN", new_y="NEXT")
 
-    def job_meta(self, text: str):
-        self.set_font(FONT_NAME, "I", SIZE_META)
-        self.set_text_color(*MID_GRAY)
-        self.cell(0, LH_META, _strip(text), new_x="LMARGIN", new_y="NEXT")
-
     def two_col_row(self, left: str, right: str, *, bold: bool, italic: bool):
         """Render `left` flush-left and `right` flush-right on the same line.
 
-        Used for: Company / Location and Title / Date rows.
+        Used for: Company / Location and Title / Date rows. The right cell
+        (location / date range) is measured first and gets the width it needs;
+        the left cell gets the remainder and is ellipsized if it would overlap.
         """
         style = "B" if bold else ("I" if italic else "")
         size  = SIZE_BODY + 0.5 if bold else SIZE_META
@@ -126,12 +123,22 @@ class _PDF(FPDF):
         self.set_font(FONT_NAME, style, size)
         self.set_text_color(*color)
 
+        left_txt, right_txt = _strip(left), _strip(right)
+        gap     = 3  # mm of breathing room between the columns
+        right_w = self.get_string_width(right_txt)
+        left_w  = max(CONTENT_W - right_w - gap, 10)
+        if self.get_string_width(left_txt) > left_w:
+            ell = "…" if _HAS_TTF else "..."
+            while left_txt and self.get_string_width(left_txt + ell) > left_w:
+                left_txt = left_txt[:-1]
+            left_txt = left_txt.rstrip() + ell
+
         y_start = self.get_y()
         self.set_xy(MARGIN, y_start)
-        self.cell(CONTENT_W, lh, _strip(left), align="L")
-        # Reset to same Y to overlay the right-aligned cell on the same line
+        self.cell(left_w, lh, left_txt, align="L")
+        # Reset to same Y to place the right-aligned cell on the same line
         self.set_xy(MARGIN, y_start)
-        self.cell(CONTENT_W, lh, _strip(right), align="R", new_x="LMARGIN", new_y="NEXT")
+        self.cell(CONTENT_W, lh, right_txt, align="R", new_x="LMARGIN", new_y="NEXT")
 
     def bullet(self, text: str):
         self.set_font(FONT_NAME, "", SIZE_BODY)
@@ -184,13 +191,10 @@ def render_pdf(md_path: Path, pdf_path: Path) -> None:
             prev_was_h1 = False
             continue
 
-        # Skip trailing note
-        if line.startswith("*Note:") or line.startswith("---"):
-            continue
-
-        # H1 — candidate name (in accent color)
+        # H1 — candidate name (in accent color). Goes through _strip like every
+        # other string so the core-font fallback transliteration applies.
         if line.startswith("# "):
-            name = line[2:].strip()
+            name = _strip(line[2:].strip())
             pdf.set_font(FONT_NAME, "B", SIZE_NAME)
             pdf.set_text_color(*ACCENT)
             pdf.cell(0, 8, name, new_x="LMARGIN", new_y="NEXT", align="C")
@@ -240,12 +244,6 @@ def render_pdf(md_path: Path, pdf_path: Path) -> None:
                 pdf.job_header(line)
             else:
                 pdf.skill_row(category, skills)
-            continue
-
-        # Italic line *...*  (job meta: location | dates)
-        if line.startswith("*") and line.endswith("*") and not line.startswith("**"):
-            pdf.job_meta(line[1:-1])
-            pdf.ln(0.3)
             continue
 
         # Everything else (summary paragraph, plain edu lines, etc.)
