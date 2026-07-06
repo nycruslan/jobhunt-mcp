@@ -31,3 +31,20 @@ def test_comp_from_amounts():
     assert comp_from_amounts(None, None) == ""
     # Implausible (too low for annual, no hourly hint) is rejected.
     assert comp_from_amounts(5, 9) == ""
+
+
+def test_comp_from_amounts_intervals():
+    assert comp_from_amounts(200000, 250000, "yearly") == "200-250K"
+    # Daily rates annualize (x260), they are not hourly.
+    assert comp_from_amounts(600, 800, "daily") == "156-208K"
+    assert comp_from_amounts(15000, 18000, "monthly") == "180-216K"
+    assert comp_from_amounts(4000, 5000, "weekly") == "208-260K"
+
+
+def test_annual_range_survives_hourly_mention_elsewhere():
+    text = "Annual salary: $180,000 - $220,000. Contractors are paid hourly."
+    assert parse_comp(text) == "180-220K"
+
+
+def test_genuine_hourly_posting():
+    assert parse_comp("This role pays $75 - $90 per hour.") == "75-90/hr"

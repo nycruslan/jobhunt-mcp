@@ -37,3 +37,33 @@ def test_real_comp_beats_no_comp_signal():
     with_band = score.score_job("Senior Software Engineer", JD, "", "400-600K")
     no_band = score.score_job("Senior Software Engineer", JD, "", "")
     assert with_band >= no_band
+
+
+def test_transparency_never_hurts_curated_company(monkeypatch):
+    # Posted bands are BASE salary; the curated tc_range is TOTAL comp. A listed
+    # company that discloses its (lower) base band must not rank below itself.
+    # Fixed index so the test doesn't depend on the user's personal targets.yaml.
+    monkeypatch.setattr(score, "_company_index",
+                        lambda: {"examplecorp": {"tc_max": 900, "tc_range": "450-900K"}})
+    with_band = score.score_job("Senior Software Engineer", JD, "ExampleCorp", "300-405K")
+    no_band = score.score_job("Senior Software Engineer", JD, "ExampleCorp", "")
+    assert with_band >= no_band
+    # And a posting that pays above the curated ceiling still helps.
+    assert score._comp_fit("ExampleCorp", "500-1200K") >= score._comp_fit("ExampleCorp", "")
+
+
+def test_offrole_modifier_does_not_sink_engineer_title():
+    # "Operations" as a specialty modifier must not trip the off-role penalty.
+    mlops = score.score_job("Senior Software Engineer, Machine Learning Operations", "", "", "")
+    ml = score.score_job("Senior Software Engineer, Machine Learning", "", "", "")
+    assert mlops == ml
+    hw_infra = score.score_job("Senior Software Engineer, Hardware Infrastructure", "", "", "")
+    infra = score.score_job("Senior Software Engineer, Infrastructure", "", "", "")
+    assert hw_infra == infra
+
+
+def test_pure_offrole_titles_still_penalized():
+    senior = score.score_job("Senior Software Engineer", JD, "", "")
+    for title in ("Operations Manager", "Customer Support Specialist",
+                  "Talent Acquisition Partner", "Hardware Engineer"):
+        assert score.score_job(title, JD, "", "") < senior, title
