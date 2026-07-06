@@ -7,11 +7,11 @@
   <!-- Scheduled JobHunt autosync (email -> pipeline). Runs Claude headless on the
        local machine so it can reach both the jobhunt MCP server and Gmail.
        Replace __MCPDIR__ and __HOME__, install to
-       ~/Library/LaunchAgents/com.ruslan.jobhunt-autosync.plist, then:
-         launchctl load ~/Library/LaunchAgents/com.ruslan.jobhunt-autosync.plist -->
+       ~/Library/LaunchAgents/com.jobhunt.autosync.plist, then:
+         launchctl load ~/Library/LaunchAgents/com.jobhunt.autosync.plist -->
 
   <key>Label</key>
-  <string>com.ruslan.jobhunt-autosync</string>
+  <string>com.jobhunt.autosync</string>
 
   <key>ProgramArguments</key>
   <array>

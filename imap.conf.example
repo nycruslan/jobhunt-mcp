@@ -1,0 +1,6 @@
+# IMAP credentials for imap_fetch.py (the VPS autosync's read-only Gmail fetch).
+# Copy to imap.conf next to this file, fill in, then: chmod 600 imap.conf
+# GMAIL_APP_PASSWORD is a Google App Password (myaccount.google.com/apppasswords),
+# NOT your Google login password. Requires 2-step verification on the account.
+GMAIL_ADDRESS=you@gmail.com
+GMAIL_APP_PASSWORD=xxxxxxxxxxxxxxxx

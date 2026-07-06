@@ -99,17 +99,22 @@ def _pull_all_feeds() -> int:
     for name, detail in errors:
         log.warning("Feed error: %s — %s", name, detail)
 
-    # Snapshot the DB before the destructive purge; _prune_backups keeps the newest few.
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    try:
-        tracker.backup_db(MCP_DIR / f"tracker.sqlite.bak-{stamp}")
-    except Exception as e:
-        log.warning("DB backup failed (skipping purge): %s", e)
-    else:
-        # Full pull re-lists every open req; drop untouched postings gone for 21+ days.
-        removed = tracker.purge_stale_jobs(days=21)
-        if removed:
-            log.info("Pruned %d stale postings not seen in 21+ days", removed)
+    # Full pull re-lists every open req; drop untouched postings gone for 21+
+    # days. Purge only when every feed answered — a failed feed never bumps its
+    # jobs' last_seen, so purging after an outage would delete live postings —
+    # and only after a successful snapshot (_prune_backups keeps the newest few).
+    if errors:
+        log.warning("Skipping stale purge: %d feed(s) errored", len(errors))
+    elif tracker.count_stale_jobs(days=21):
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        try:
+            tracker.backup_db(MCP_DIR / f"tracker.sqlite.bak-{stamp}")
+        except Exception as e:
+            log.warning("DB backup failed (skipping purge): %s", e)
+        else:
+            removed = tracker.purge_stale_jobs(days=21)
+            if removed:
+                log.info("Pruned %d stale postings not seen in 21+ days", removed)
     return new_count
 
 
@@ -141,8 +146,9 @@ MAX_PER_COMPANY = 2
 
 
 def esc(text: str) -> str:
-    """Escape untrusted text for Telegram HTML parse_mode (& < > only)."""
-    return html.escape(str(text or "").strip(), quote=False)
+    """Escape untrusted text for Telegram HTML parse_mode. quote=True because
+    this also lands inside href="..." attributes."""
+    return html.escape(str(text or "").strip(), quote=True)
 
 
 def _tier(score: int) -> str:
@@ -237,14 +243,16 @@ def _diversify(jobs: list[dict], max_per_company: int = 2) -> tuple[list[dict], 
 
 
 def _since_window() -> tuple[datetime, str]:
-    """Return (cutoff_dt, label) for new-matches window — handles Mon catch-up."""
-    now_dt = datetime.now(timezone.utc)
-    weekday = now_dt.weekday()  # Monday=0
+    """Return (cutoff_dt, label) for new-matches window — handles Mon catch-up.
+    Day boundary and weekday are local (the user's day, not UTC's); the cutoff is
+    converted back to UTC because tracker timestamps are stored as UTC isoformat."""
+    now_local = datetime.now().astimezone()
+    weekday = now_local.weekday()  # Monday=0
     if weekday == 0:  # Monday — catch up since last Friday morning
-        cutoff = (now_dt - timedelta(days=3)).replace(hour=0, minute=0, second=0, microsecond=0)
-        return cutoff, "since Friday"
-    cutoff = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-    return cutoff, "today"
+        cutoff = (now_local - timedelta(days=3)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return cutoff.astimezone(timezone.utc), "since Friday"
+    cutoff = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return cutoff.astimezone(timezone.utc), "today"
 
 
 def _job_block(job: dict, scorer, applied_history: dict) -> str:
@@ -373,8 +381,27 @@ def build_message(new_count: int) -> str:
 
 # ── Telegram sender ───────────────────────────────────────────────────────────
 
+# Telegram hard limit per message; keep headroom for the truncation marker.
+TG_MAX = 4096
+
+
+def _redact_send_err(e: Exception) -> str:
+    """requests errors embed the request URL — which carries the bot token — in
+    str(e). Log only the status code + response text, never the URL."""
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        return f"HTTP {resp.status_code}: {resp.text[:300]}"
+    return type(e).__name__
+
+
 def send_telegram(token: str, chat_id: str, text: str) -> None:
     import requests
+
+    if len(text) > TG_MAX:
+        # Cut at a line boundary so no HTML tag is left open mid-message.
+        cut = text.rfind("\n", 0, TG_MAX - 20)
+        text = text[: cut if cut > 0 else TG_MAX - 20] + "\n…truncated"
+        log.warning("Briefing over %d chars — truncated for Telegram", TG_MAX)
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
@@ -448,15 +475,33 @@ def main() -> None:
     message = build_message(new_count)
     subject = f"JobHunt Brief — {date.today().strftime('%a %b %-d')} ({new_count} new)"
 
+    # Each channel fails independently, and publish + backup prune ALWAYS run —
+    # a dead Telegram send must not leave 24MB .bak files piling up daily.
     log.info("Sending briefing via %s…", delivery)
+    delivered = []
     if delivery in ("telegram", "both"):
-        send_telegram(conf["TELEGRAM_BOT_TOKEN"], conf["TELEGRAM_CHAT_ID"], message)
+        try:
+            send_telegram(conf["TELEGRAM_BOT_TOKEN"], conf["TELEGRAM_CHAT_ID"], message)
+            delivered.append("telegram")
+        except Exception as e:
+            log.error("Telegram send failed: %s", _redact_send_err(e))
     if delivery in ("email", "both"):
-        send_email(conf, subject, message)
+        try:
+            send_email(conf, subject, message)
+            delivered.append("email")
+        except Exception as e:
+            log.error("Email send failed: %s: %s", type(e).__name__, e)
 
-    import publish
-    publish.publish_safe()
+    try:
+        import publish
+        publish.publish_safe()
+    except Exception as e:
+        log.error("Publish failed: %s", e)
     _prune_backups(keep=2)
+
+    if not delivered:
+        log.error("Briefing was not delivered on any channel.")
+        sys.exit(1)
     log.info("Done.")
 
 

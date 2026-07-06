@@ -20,8 +20,8 @@ EMAIL_TO=
 
 # ── Web admin snapshot (Turso) ────────────────────────────────────────────────
 # Optional. With preferences.publish: true, the tool pushes a dashboard snapshot
-# to Turso for ruslanshulga.com/admin. Create via: turso db create jobhunt &&
-# turso db show jobhunt --url && turso db tokens create jobhunt. See SETUP-ADMIN.md.
+# to Turso for your web dashboard. Create via: turso db create jobhunt &&
+# turso db show jobhunt --url && turso db tokens create jobhunt.
 TURSO_DATABASE_URL=
 TURSO_AUTH_TOKEN=
 
