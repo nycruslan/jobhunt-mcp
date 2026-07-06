@@ -12,14 +12,18 @@ dependencies = [
     "requests>=2.32",
     "PyYAML>=6.0",
     "fpdf2>=2.8",
-    "mcp>=1.10",
+    # <2: SDK v2 (2026-07) renames mcp.server.fastmcp.FastMCP to MCPServer.
+    # Migrate deliberately, not via an ambient resolver upgrade.
+    "mcp>=1.10,<2",
 ]
 
 [project.optional-dependencies]
 # Enables publishing the dashboard snapshot to Turso for the web /admin page.
 admin = ["libsql>=0.1"]
 # Enables the Indeed/Google supplemental scrape (preferences.enable_jobspy). Heavy.
-jobspy = ["python-jobspy>=1.1.80", "pandas>=2.2"]
+# Pinned below 1.2: this library scrapes hostile targets and a release could
+# rename the DataFrame columns feeds/jobspy.py maps.
+jobspy = ["python-jobspy>=1.1.82,<1.2", "pandas>=2.2"]
 # Test suite.
 dev = ["pytest>=8"]
 
@@ -31,5 +35,5 @@ jobhunt-mcp = "server:main"
 
 # Flat layout: the app is a set of top-level modules plus a few packages.
 [tool.setuptools]
-py-modules = ["server", "score", "tracker", "config", "daily_briefing", "publish"]
+py-modules = ["server", "score", "tracker", "config", "auto", "daily_briefing", "publish"]
 packages = ["feeds", "resume", "cover", "referrals"]

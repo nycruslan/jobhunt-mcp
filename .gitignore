@@ -21,3 +21,8 @@ dist/
 .DS_Store
 .pytest_cache/
 autosync.log
+
+# Local-only credentials and session artifacts
+imap.conf
+.playwright-mcp/
+*.png
