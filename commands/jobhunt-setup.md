@@ -61,8 +61,8 @@ Everything below with a key is optional and only adds reach.
 - Install the commands: `cp ~/.jobhunt_mcp/commands/*.md ~/.claude/commands/`
 - Verify it loaded: `claude mcp get jobhunt` should report Connected.
 
-**10. Finish**
+**9. Finish**
 - Tell them to restart Claude Code so the jobhunt tools and `/jobhunt-*` commands attach (MCP
   servers connect at session start, so they aren't live in this session yet).
-- Then the daily flow is: `/jobhunt-today` to see matches → `/jobhunt-draft <id>` for a
-  tailored resume + cover letter → apply → `/jobhunt-applied <id>`.
+- Then the daily flow is: `/jobhunt-today` to see matches → `/jobhunt-draft <id>` for the
+  resume PDF + a custom cover letter → apply → `/jobhunt-applied <id>`.

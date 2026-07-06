@@ -1,6 +1,8 @@
 # Job Hunt Targets — verified ATS slugs as of May 2026
 # ats: greenhouse | lever | ashby | amazon | workday | manual
 # Slugs marked ✓ are confirmed working against the live API.
+# tc_range: only the top of the range feeds scoring (score.py takes the max);
+# the full range is shown as-is when a posting carries no real salary.
 
 tier_a:
   name: "FAANG ($340–750K TC NYC)"
@@ -8,30 +10,25 @@ tier_a:
     - name: Meta
       ats: manual
       url: https://metacareers.com/jobs/?roles[0]=full-time
-      level: E5-E6
       tc_range: "340-750K"
 
     - name: Google
       ats: manual
       url: https://careers.google.com/jobs/results/?employment_type=FULL_TIME&location=New+York
-      level: L5-L6
       tc_range: "340-700K"
 
     - name: Amazon
       ats: amazon              # ✓ public JSON endpoint (includes AWS, Alexa, Prime Video)
-      level: SDE3-Principal
       tc_range: "300-650K"
 
     - name: Apple
       ats: manual              # No clean public API as of May 2026
       url: https://jobs.apple.com/en-us/search?location=new-york-NYCGR&team=software-and-services-SWDV
-      level: ICT4-ICT5
       tc_range: "300-600K"
 
     - name: Microsoft
       ats: manual              # New apply.careers.microsoft.com SPA requires login
       url: https://careers.microsoft.com/us/en/search-results?keywords=senior+software+engineer&location=New+York
-      level: L63-L65
       tc_range: "300-600K"
 
     - name: NVIDIA
@@ -40,12 +37,10 @@ tier_a:
         host:   nvidia.wd5
         tenant: nvidia
         site:   NVIDIAExternalCareerSite
-      level: L5-L7
       tc_range: "350-700K"
 
     - name: Netflix
       ats: netflix             # ✓ Eightfold ATS public positions API (added Jun 2026)
-      level: L5-L6
       tc_range: "450-900K"
 
 tier_b:
@@ -54,103 +49,86 @@ tier_b:
     - name: Anthropic
       ats: greenhouse
       slug: anthropic          # ✓ confirmed, 232 jobs
-      level: L5-L6
       tc_range: "450-900K"
 
     - name: OpenAI
       ats: ashby
       slug: openai             # ✓ moved off Lever (now 404) to Ashby — 716 jobs as of Jun 2026
-      level: L5-L6
       tc_range: "500-900K"
 
     - name: Stripe
       ats: greenhouse
       slug: stripe             # ✓ confirmed, 185 jobs
-      level: Staff
       tc_range: "400-700K"
 
     - name: Datadog
       ats: greenhouse
       slug: datadog            # ✓ confirmed, 203 jobs
-      level: Staff
       tc_range: "380-650K"
 
     - name: Ramp
       ats: ashby
       slug: ramp               # ✓ slug confirmed
-      level: L5-Staff
       tc_range: "400-700K"
 
     - name: Plaid
       ats: ashby
       slug: plaid              # ✓ slug confirmed
-      level: Staff
       tc_range: "380-600K"
 
     - name: Cursor
       ats: ashby
       slug: cursor             # ✓ slug confirmed
-      level: Senior-Staff
       tc_range: "400-800K"
 
     - name: Vercel
       ats: greenhouse
       slug: vercel             # ✓ confirmed, 79 jobs
-      level: Senior-Staff
       tc_range: "380-650K"
 
     - name: Linear
       ats: ashby
       slug: linear             # ✓ slug confirmed
-      level: Senior-Staff
       tc_range: "350-600K"
 
     - name: Notion
       ats: ashby
       slug: notion             # ✓ slug confirmed
-      level: Staff
       tc_range: "380-650K"
 
     - name: Perplexity
       ats: ashby
       slug: perplexity         # ✓ slug confirmed
-      level: Senior-Staff
       tc_range: "400-750K"
 
     - name: Mistral
       ats: lever
       slug: mistral            # ✓ confirmed, 163 jobs
-      level: Senior
       tc_range: "300-600K"
 
     - name: CoreWeave
       ats: greenhouse
       slug: coreweave          # ✓ confirmed, 240 jobs — GPU cloud infra
-      level: Senior-Staff
       tc_range: "300-600K"
 
     - name: xAI
       ats: greenhouse
       slug: xai                # ✓ confirmed, 225 jobs (added Jun 2026)
-      level: Senior-Staff
       tc_range: "400-900K"
 
     - name: Together AI
       ats: greenhouse
       slug: togetherai         # ✓ confirmed, 58 jobs — GPU/inference cloud
-      level: Senior-Staff
       tc_range: "350-700K"
 
     - name: Glean
       ats: greenhouse
       slug: gleanwork          # ✓ confirmed, 164 jobs — enterprise RAG search
-      level: Senior-Staff
       tc_range: "350-700K"
 
     - name: Fireworks AI
       ats: greenhouse
       slug: fireworksai        # ✓ confirmed, 28 jobs — fast inference
-      level: Senior-Staff
       tc_range: "350-700K"
 
 tier_c:
@@ -159,49 +137,41 @@ tier_c:
     - name: Jump Trading
       ats: greenhouse
       slug: jumptrading        # ✓ confirmed, 62 jobs
-      level: SWE
       tc_range: "500-1000K"
 
     - name: DRW
       ats: greenhouse
       slug: drweng             # ✓ confirmed, 26 jobs
-      level: Senior SWE
       tc_range: "450-800K"
 
     - name: Two Sigma
       ats: manual
       url: https://www.twosigma.com/careers/
-      level: SWE
       tc_range: "400-700K"
 
     - name: Citadel
       ats: manual
       url: https://www.citadel.com/careers/
-      level: Senior SWE
       tc_range: "500-900K"
 
     - name: Jane Street
       ats: manual
       url: https://www.janestreet.com/join-jane-street/open-roles/
-      level: SWE
       tc_range: "600-1100K"
 
     - name: Hudson River Trading
       ats: manual
       url: https://www.hudsonrivertrading.com/careers/
-      level: Senior SWE
       tc_range: "500-900K"
 
     - name: Bloomberg
       ats: manual
       url: https://careers.bloomberg.com/job/search?el=Software+Development
-      level: Senior SWE
       tc_range: "350-600K"
 
     - name: Millennium
       ats: manual
       url: https://www.mlp.com/careers/
-      level: Senior SWE
       tc_range: "500-1000K"
 
 tier_d:
@@ -210,37 +180,31 @@ tier_d:
     - name: Scale AI
       ats: greenhouse
       slug: scaleai            # ✓ confirmed, 171 jobs
-      level: Senior-Staff
       tc_range: "300-600K"
 
     - name: Pinecone
       ats: ashby
       slug: pinecone           # ✓ slug confirmed (0 open now)
-      level: Senior
       tc_range: "250-500K"
 
     - name: Cohere
       ats: ashby
       slug: cohere             # ✓ slug confirmed (0 open now)
-      level: Senior
       tc_range: "250-500K"
 
     - name: ElevenLabs
       ats: ashby
       slug: elevenlabs         # ✓ slug confirmed (0 open now)
-      level: Senior
       tc_range: "200-450K"
 
     - name: Runway
       ats: ashby
       slug: runway             # ✓ slug confirmed (0 open now)
-      level: Senior
       tc_range: "200-450K"
 
     - name: Modal
       ats: ashby
       slug: modal              # ✓ slug confirmed (0 open now)
-      level: Senior
       tc_range: "250-500K"
 
 tier_e:
@@ -249,25 +213,21 @@ tier_e:
     - name: Databricks
       ats: greenhouse
       slug: databricks         # ✓ confirmed, 779 jobs
-      level: Senior-Staff
       tc_range: "350-650K"
 
     - name: Cloudflare
       ats: greenhouse
       slug: cloudflare         # ✓ confirmed, 142 jobs
-      level: Senior-Staff
       tc_range: "300-550K"
 
     - name: MongoDB
       ats: greenhouse
       slug: mongodb            # ✓ confirmed, 418 jobs
-      level: Senior-Staff
       tc_range: "280-530K"
 
     - name: Figma
       ats: greenhouse
       slug: figma              # ✓ confirmed, 159 jobs
-      level: Senior-Staff
       tc_range: "280-520K"
 
 tier_f:
@@ -276,77 +236,64 @@ tier_f:
     - name: Robinhood
       ats: greenhouse
       slug: robinhood          # ✓ confirmed, 133 jobs
-      level: Senior-Staff
       tc_range: "280-520K"
 
     - name: Brex
       ats: greenhouse
       slug: brex               # ✓ confirmed, 221 jobs
-      level: Senior-Staff
       tc_range: "280-500K"
 
     - name: Block
       ats: greenhouse
       slug: block              # ✓ confirmed, 173 jobs (Square, Cash App, TBD)
-      level: Senior-Staff
       tc_range: "280-520K"
 
     - name: Chime
       ats: greenhouse
       slug: chime              # ✓ confirmed, 73 jobs
-      level: Senior
       tc_range: "250-450K"
 
     - name: Mercury
       ats: ashby
       slug: mercury            # ✓ slug confirmed (0 open now)
-      level: Senior
       tc_range: "250-450K"
 
     - name: Spotify
       ats: lever
       slug: spotify            # ✓ confirmed, 202 jobs
-      level: Senior-Staff
       tc_range: "280-500K"
 
     - name: Reddit
       ats: greenhouse
       slug: reddit             # ✓ confirmed, 161 jobs
-      level: Senior-Staff
       tc_range: "280-520K"
 
     - name: Discord
       ats: greenhouse
       slug: discord            # ✓ confirmed, 76 jobs
-      level: Senior
       tc_range: "250-480K"
 
     - name: Lyft
       ats: greenhouse
       slug: lyft               # ✓ confirmed, 126 jobs
-      level: Senior-Staff
       tc_range: "280-500K"
 
     - name: Airbnb
       ats: greenhouse
       slug: airbnb             # ✓ confirmed, 230 jobs (added Jun 2026)
-      level: Senior-Staff
       tc_range: "300-600K"
 
     - name: Pinterest
       ats: greenhouse
       slug: pinterest          # ✓ confirmed, 176 jobs
-      level: Senior-Staff
       tc_range: "300-550K"
 
     - name: Roblox
       ats: greenhouse
       slug: roblox             # ✓ confirmed, 236 jobs — pays top of market
-      level: Senior-Staff
       tc_range: "350-700K"
 
     - name: Coinbase
       ats: greenhouse
       slug: coinbase           # ✓ board live (0 NYC-eligible open at add time)
-      level: Senior-Staff
       tc_range: "300-600K"

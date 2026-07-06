@@ -1,6 +1,6 @@
 # JobHunt MCP
 
-A read-only job search assistant. It pulls openings from target companies, scores them against your resume, tracks the pipeline in SQLite, drafts tailored resumes and cover letters, and sends a daily Telegram brief. It never submits applications. Every apply is human-in-the-loop.
+A read-only job search assistant. It pulls openings from target companies, scores them against your resume, tracks the pipeline in SQLite, renders your resume PDF per job, drafts cover letters, and sends a daily Telegram brief. It never submits applications. Every apply is human-in-the-loop.
 
 Self-host and config-driven: drop in your own `profile.yaml` and `targets.yaml`, connect it to your Claude, and it's yours. Nothing personal is hardcoded.
 
@@ -16,7 +16,7 @@ targets.yaml ──► feeds/ ──► score.py ──► tracker.sqlite
 - **feeds/** — one module per source. ATS boards (Greenhouse, Lever, Ashby, Amazon, Netflix, Workday) hit clean public JSON APIs; `jobspy.py` scrapes Indeed/Google for companies without one. `feeds/__init__.py` (`fetch_for_company`, `pull`) is the single dispatch point used by both the server and the briefing. `_comp.py` extracts real posted salary; `_location.py` is the configurable home/remote filter (driven by `preferences` in `profile.yaml`); `_http.py` is the shared session + HTML stripper.
 - **score.py** — JD-relative fit: skill match + role title + AI signal + company comp band. `display_comp()` prefers a posting's real salary over the static company band.
 - **tracker.py** — SQLite store. `upsert_job` inserts new jobs and refreshes score/comp/`last_seen` on known ones. Maintenance: `purge_stale_jobs` (drops untouched postings unseen for 21+ days), `backup_db`, idempotent `_migrate`.
-- **server.py** — the MCP server. Tools: `jobhunt_today`, `jobhunt_search`, `jobhunt_draft`, `jobhunt_save_cover`, `jobhunt_applied`, `jobhunt_active_applications`, `jobhunt_set_status`, `jobhunt_followup`, `jobhunt_referrals`, `jobhunt_prep`, `jobhunt_dismiss`, snooze/unsnooze, `jobhunt_pull_feed`, `jobhunt_status`, `jobhunt_stats`. Email sync is the `/jobhunt-sync` command: it reads your inbox (read-only) for recruiter replies and proposes status changes you confirm.
+- **server.py** — the MCP server. Tools: `jobhunt_today`, `jobhunt_search`, `jobhunt_draft`, `jobhunt_save_cover`, `jobhunt_applied`, `jobhunt_active_applications`, `jobhunt_set_status`, `jobhunt_followup`, `jobhunt_referrals`, `jobhunt_prep`, `jobhunt_dismiss`, snooze/unsnooze, `jobhunt_pull_feed`, `jobhunt_record_update` (what the autosync is built on), `jobhunt_status`, `jobhunt_stats`. Email sync is the `/jobhunt-sync` command: it reads your inbox (read-only) for recruiter replies and proposes status changes you confirm.
 - **daily_briefing.py** — launchd job. Pulls every feed, then sends an HTML-formatted Telegram brief. Logs rotate at 1MB; keeps the 2 newest DB backups.
 - **resume/**, **cover/** — `resume/` renders a single-page PDF from your `profile.yaml`; `cover/` saves the cover letter Claude writes inline in the chat. Tailoring happens in the conversation, which already has the JD and your background.
 
@@ -47,7 +47,7 @@ $EDITOR resume/profile.yaml
 ```
 
 `preferences` in that file drives the location filter (`home_terms`,
-`home_states`, `remote_scope`), the tailoring model, and the daily brief.
+`home_states`, `remote_scope`) and the daily brief, plus which job sources run.
 `scoring.category_weights` rebalances which skills matter for your field.
 
 **3. Pick your targets** — edit `targets.yaml` (companies, ATS slugs, comp bands).

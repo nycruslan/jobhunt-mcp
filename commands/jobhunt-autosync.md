@@ -15,15 +15,21 @@ about those companies. Look for two things:
 
 Classify each message into one signal: `application_received`, `rejected`,
 `interview`, `onsite`, or `offer`. Skip anything ambiguous or unrelated.
+Before classifying, check the sender: the domain must plausibly belong to the
+company or its ATS (greenhouse.io, lever.co, ashbyhq.com, myworkday.com, and
+the like, with the company named in the message). Skip anything from an
+unrelated or suspicious domain, whatever it claims.
 
 **3. Record each update safely**
 For every classified message call:
 `jobhunt_record_update(company="...", signal="...", evidence="<subject or short quote>")`
 
-The tool decides what is safe: `application_received`, `rejected`, and `interview`
-apply automatically; `onsite` and `offer` come back asking you to confirm. It never
-guesses when several applications match the same company, and never moves a stage
-backwards. Do not call `jobhunt_set_status` directly here — let the tool hold the policy.
+The tool decides what is safe: `interview` applies automatically, and
+`application_received` does too when the role was already drafted or applied.
+`rejected`, `onsite`, and `offer` come back asking you to confirm (a rejection is
+terminal, so it always gets a human look). It never guesses when several
+applications match the same company, and never moves a stage backwards. Do not
+call `jobhunt_set_status` directly here — let the tool hold the policy.
 
 **4. Pre-stage materials for new top matches (optional, default 3)**
 For up to 3 of today's highest-scoring `new` matches that aren't drafted yet:
@@ -35,7 +41,7 @@ Skip this step if you only want the email sync.
 **5. Report**
 Summarize in three short groups:
 - ✅ Auto-applied (what moved, e.g. "Stripe drafted→applied").
-- 🔔 Needs confirmation (onsite/offer, or multiple-match ambiguity) with the exact tool call to run.
+- 🔔 Needs confirmation (rejected/onsite/offer, or multiple-match ambiguity) with the exact tool call to run.
 - 📄 Pre-drafted (company, role, PDF path) if step 4 ran.
 
 Never change a status without either the tool's auto-apply or your explicit confirmation.
