@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import logging
 
-import requests
-
 import config
 from feeds._http import build_session, html_to_text, DEFAULT_TIMEOUT
 from feeds._location import is_local_or_remote
@@ -26,6 +24,7 @@ MAX_DAYS_OLD = 4
 
 
 def fetch_jobs() -> list[dict]:
+    """Request errors propagate to the caller (feeds.pull records them)."""
     app_id = config.secret("ADZUNA_APP_ID")
     app_key = config.secret("ADZUNA_APP_KEY")
     if not (app_id and app_key):
@@ -38,23 +37,19 @@ def fetch_jobs() -> list[dict]:
     seen: set[str] = set()
     out: list[dict] = []
     for role in roles[:MAX_ROLES]:
-        try:
-            r = SESSION.get(
-                BASE,
-                params={
-                    "app_id": app_id,
-                    "app_key": app_key,
-                    "what": role,
-                    "where": where,
-                    "results_per_page": RESULTS_PER,
-                    "max_days_old": MAX_DAYS_OLD,
-                },
-                timeout=DEFAULT_TIMEOUT,
-            )
-            r.raise_for_status()
-        except requests.RequestException as e:
-            log.warning("Adzuna '%s' failed: %s", role, e)
-            continue
+        r = SESSION.get(
+            BASE,
+            params={
+                "app_id": app_id,
+                "app_key": app_key,
+                "what": role,
+                "where": where,
+                "results_per_page": RESULTS_PER,
+                "max_days_old": MAX_DAYS_OLD,
+            },
+            timeout=DEFAULT_TIMEOUT,
+        )
+        r.raise_for_status()
 
         for j in r.json().get("results", []):
             # Adzuna's own ad id is stable across runs; the redirect_url carries

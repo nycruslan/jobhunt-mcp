@@ -34,7 +34,11 @@ _DIGIT_RE = re.compile(r"(\d+)")
 
 
 def fetch_jobs(host: str, tenant: str, site: str, company_name: str = "") -> list[dict]:
-    """Fetch NYC-relevant jobs from a Workday tenant."""
+    """Fetch NYC-relevant jobs from a Workday tenant.
+
+    Request errors propagate to the caller (feeds.pull records them per company) —
+    a mid-pagination failure must not report partial results as success.
+    """
     base_url = f"https://{host}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs"
     display  = company_name or tenant.title()
 
@@ -45,18 +49,16 @@ def fetch_jobs(host: str, tenant: str, site: str, company_name: str = "") -> lis
 
     jobs: list[dict] = []
     for page in range(MAX_PAGES):
+        if page:
+            time.sleep(0.5)  # polite pause between pages
         body = {
             "appliedFacets": {"locations": location_ids},
             "limit":         PAGE_LIMIT,
             "offset":        page * PAGE_LIMIT,
             "searchText":    "",
         }
-        try:
-            r = SESSION.post(base_url, json=body, timeout=DEFAULT_TIMEOUT)
-            r.raise_for_status()
-        except requests.RequestException as e:
-            log.warning("Workday %s page %d failed: %s", tenant, page, e)
-            break
+        r = SESSION.post(base_url, json=body, timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
 
         page_jobs = r.json().get("jobPostings", [])
         if not page_jobs:
@@ -77,7 +79,6 @@ def fetch_jobs(host: str, tenant: str, site: str, company_name: str = "") -> lis
 
         if len(page_jobs) < PAGE_LIMIT:
             break
-        time.sleep(0.5)
 
     log.info("Workday %s: %d jobs after NYC filter", tenant, len(jobs))
     return jobs
@@ -98,14 +99,12 @@ def _fetch_jd(base_url: str, external_path: str) -> str:
 # ── Internals ─────────────────────────────────────────────────────────────────
 
 def _discover_nyc_location_ids(base_url: str) -> list[str]:
-    """One call with no filter to get the location facet tree, then extract IDs."""
-    try:
-        r = SESSION.post(base_url, json={"limit": 1, "offset": 0, "searchText": ""},
-                         timeout=DEFAULT_TIMEOUT)
-        r.raise_for_status()
-    except requests.RequestException as e:
-        log.error("Workday facet discovery failed for %s: %s", base_url, e)
-        return []
+    """One call with no filter to get the location facet tree, then extract IDs.
+
+    Request errors propagate — a failed discovery is an outage, not "no jobs"."""
+    r = SESSION.post(base_url, json={"limit": 1, "offset": 0, "searchText": ""},
+                     timeout=DEFAULT_TIMEOUT)
+    r.raise_for_status()
 
     ids: list[str] = []
     for facet in r.json().get("facets", []):
