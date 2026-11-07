@@ -1,5 +1,12 @@
 # JobHunt MCP
 
+> **Retired (November 2026).** This project is no longer maintained and the
+> repository is archived. For the same workflow (resume-aware matching, daily
+> ATS scanning, tailored CVs, application tracking) use
+> [career-ops](https://github.com/career-ops-hq/career-ops), an MIT-licensed
+> Claude Code plugin, together with the official Indeed and Levels.fyi
+> connectors. The code below is kept for reference only.
+
 A read-only job search assistant. It pulls openings from target companies, scores them against your resume, tracks the pipeline in SQLite, renders your resume PDF per job, drafts cover letters, and sends a daily Telegram brief. It never submits applications. Every apply is human-in-the-loop.
 
 Self-host and config-driven: drop in your own `profile.yaml` and `targets.yaml`, connect it to your Claude, and it's yours. Nothing personal is hardcoded.
